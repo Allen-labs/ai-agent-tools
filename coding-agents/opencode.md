@@ -28,7 +28,6 @@
 18. [IDE 集成](#18-ide-集成)
 19. [插件系统](#19-插件系统)
 20. [与其他工具对比](#20-与其他工具对比)
-21. [快速速查](#21-快速速查)
 
 ---
 
@@ -1053,60 +1052,6 @@ OpenCode 支持通过 npm 包形式的插件扩展功能：
 
 ---
 
-## 21. 快速速查
-
-### 常用命令
-
-| 操作 | 命令 |
-|------|------|
-| 启动 TUI | `opencode` |
-| 单次执行 | `opencode run "..."` |
-| 指定模型 | `opencode --model anthropic/claude-opus-4-6` |
-| 指定 Agent | `opencode --agent plan` |
-| 健康检查 | `opencode doctor` |
-| 引导初始化 | `opencode onboard` |
-| 查看版本 | `opencode --version` |
-
-### 会话内命令
-
-| 命令 | 说明 |
-|------|------|
-| `Tab` | 切换 Agent |
-| `M` | 切换模型 |
-| `/new` | 新会话 |
-| `/compact` | 压缩上下文 |
-| `/undo` | 撤销文件修改 |
-| `/share` | 分享会话 |
-| `/connect` | 配置提供商 |
-| `/sessions` | 会话管理 |
-| `/exit` | 退出 |
-
-### 配置路径速查
-
-| 配置项 | 路径 |
-|--------|------|
-| 全局配置 | `~/.config/opencode/config.json` |
-| 项目配置 | `opencode.json` 或 `.opencode/config.json` |
-| TUI 配置 | `~/.config/opencode/tui.json` |
-| 项目记忆文件 | `AGENTS.md`（Git 根目录）|
-| 全局记忆文件 | `~/.config/opencode/AGENTS.md` |
-| Skills 目录 | `.opencode/skills/` |
-| 全局 Skills | `~/.agents/skills/` |
-| Agent 定义 | `.opencode/agents/*.md` |
-
-### 环境变量速查
-
-| 变量 | 说明 |
-|------|------|
-| `ANTHROPIC_API_KEY` | Anthropic API Key |
-| `OPENAI_API_KEY` | OpenAI API Key |
-| `GOOGLE_GENERATIVEAI_API_KEY` | Google API Key |
-| `ANTHROPIC_BASE_URL` | Anthropic 代理地址 |
-| `OPENAI_BASE_URL` | OpenAI 代理地址 |
-| `OPENCODE_INSTALL_DIR` | 自定义安装目录 |
-| `OPENCODE_CONFIG_CONTENT` | 内联 JSON 配置 |
-
----
 
 *2026-03-25 · 基于官方文档（opencode.ai/docs）、GitHub 仓库（sst/opencode）及社区实践编写*
 
