@@ -60,4 +60,63 @@ openclaw onboard --install-daemon
 
 ---
 
+## 快速速查
+
+### 安装
+
+| 工具 | 命令 |
+|------|------|
+| OpenClaw（macOS/Linux）| `curl -fsSL https://openclaw.ai/install.sh \| bash` |
+| OpenClaw（Windows）| `iwr -useb https://openclaw.ai/install.ps1 \| iex` |
+| OpenClaw（npm）| `npm install -g openclaw@latest` |
+| 首次初始化 | `openclaw onboard --install-daemon` |
+
+### 常用 CLI 命令
+
+| 命令 | 说明 |
+|------|------|
+| `openclaw status` | 查看 Gateway 状态 |
+| `openclaw doctor` | 健康检查 |
+| `openclaw logs` | 查看日志 |
+| `openclaw restart` | 重启 Gateway |
+| `openclaw update` | 更新版本 |
+| `openclaw channels list` | 查看渠道状态 |
+| `openclaw channels login <channel>` | 登录渠道（如 whatsapp）|
+| `openclaw models list` | 查看可用模型 |
+| `openclaw models set <model>` | 切换模型 |
+| `openclaw skills install <name>` | 安装技能 |
+
+### 聊天内命令
+
+| 命令 | 说明 |
+|------|------|
+| `/new` | 开始新会话 |
+| `/compact` | 压缩上下文 |
+| `/think <level>` | 设置推理深度（off/minimal/low/medium/high/xhigh）|
+| `/model <id>` | 临时切换模型 |
+| `/status` | 查看 Gateway 和渠道状态 |
+| `/usage` | 查看 Token 使用量 |
+| `/restart` | 重启 Gateway |
+
+### 配置路径速查
+
+| 配置项 | 路径 |
+|--------|------|
+| 全局配置 | `~/.openclaw/config.json` |
+| Skills 目录 | `~/.openclaw/skills/` |
+| 日志目录 | `~/.openclaw/logs/` |
+| 凭证目录 | `~/.openclaw/credentials/` |
+
+### 常用环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `ANTHROPIC_API_KEY` | Anthropic API Key |
+| `OPENAI_API_KEY` | OpenAI API Key |
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot Token |
+| `DISCORD_BOT_TOKEN` | Discord Bot Token |
+| `OPENCLAW_CONFIG` | 自定义配置文件路径 |
+
+---
+
 *2026-03-25 · 持续更新*
