@@ -901,52 +901,57 @@ claude "审查并精化刚才的认证模块，提升代码质量、补充错误
 
 ### 安装
 
-| 工具 | npm | Homebrew |
-|------|-----|---------|
-| Claude Code | `npm i -g @anthropic-ai/claude-code` | — |
-| Codex CLI | `npm i -g @openai/codex` | `brew install --cask codex` |
-| Gemini CLI | `npm i -g @google/gemini-cli` | — |
+| 工具 | npm | Homebrew | 其他 |
+|------|-----|---------|------|
+| Claude Code | `npm i -g @anthropic-ai/claude-code` | — | — |
+| Codex CLI | `npm i -g @openai/codex` | `brew install --cask codex` | — |
+| Gemini CLI | `npm i -g @google/gemini-cli` | — | — |
+| OpenCode | `npm i -g opencode-ai` | `brew install sst/tap/opencode` | `curl -fsSL https://opencode.ai/install | bash` |
 
 ### 常用命令
 
-| 操作 | Claude Code | Codex CLI | Gemini CLI |
-|------|-------------|-----------|------------|
-| 启动交互 | `claude` | `codex` | `gemini` |
-| 单次任务 | `claude -p "..."` | `codex "..."` | `gemini -p "..."` |
-| CI 执行 | `claude -p "..." --output-format json` | `codex exec "..."` | `gemini -p "..." --output-format json` |
-| 恢复会话 | `claude --continue` | `codex resume --last` | `gemini --resume` |
-| 指定模型 | `claude --model claude-opus-4-6` | `codex --model gpt-5.3-codex` | `gemini -m gemini-2.5-pro` |
-| 全自动 ⚠️ | `claude --dangerously-skip-permissions` | `codex --full-auto` | `gemini --approval-mode yolo` |
+| 操作 | Claude Code | Codex CLI | Gemini CLI | OpenCode |
+|------|-------------|-----------|------------|----------|
+| 启动交互 | `claude` | `codex` | `gemini` | `opencode` |
+| 单次任务 | `claude -p "..."` | `codex "..."` | `gemini -p "..."` | `opencode run "..."` |
+| CI 执行 | `claude -p "..." --output-format json` | `codex exec "..."` | `gemini -p "..." --output-format json` | `opencode run "..." --output-format json` |
+| 恢复会话 | `claude --continue` | `codex resume --last` | `gemini --resume` | TUI 内 `/sessions` |
+| 指定模型 | `claude --model claude-opus-4-6` | `codex --model gpt-5.3-codex` | `gemini -m gemini-2.5-pro` | `opencode --model anthropic/claude-opus-4-6` |
+| 全自动 ⚠️ | `claude --dangerously-skip-permissions` | `codex --full-auto` | `gemini --approval-mode yolo` | `--mode auto` |
 
 ### 会话内命令
 
-| 功能 | Claude Code | Codex CLI | Gemini CLI |
-|------|-------------|-----------|------------|
-| 初始化记忆文件 | `/init` | `/init` | `/init` |
-| 压缩上下文 | `/compact` | `/compact` | `/compress` |
-| 查看技能列表 | `/skills` | `/skills` | `/skills` |
-| 查看 MCP 状态 | `/mcp` | `/mcp` | `/mcp` |
-| 切换审批模式 | `Shift+Tab` | `Shift+Tab` | `Shift+Tab` |
-| 退出 | `/exit` / `Ctrl+C` | `/exit` | `/quit` / `Ctrl+C` |
+| 功能 | Claude Code | Codex CLI | Gemini CLI | OpenCode |
+|------|-------------|-----------|------------|----------|
+| 初始化记忆文件 | `/init` | `/init` | `/init` | — |
+| 压缩上下文 | `/compact` | `/compact` | `/compress` | `/compact` |
+| 查看技能列表 | `/skills` | `/skills` | `/skills` | — |
+| 查看 MCP 状态 | `/mcp` | `/mcp` | `/mcp` | — |
+| 切换审批模式 | `Shift+Tab` | `Shift+Tab` | `Shift+Tab` | `Tab`（切换 Agent）|
+| 新建会话 | `/clear` | — | — | `/new` |
+| 撤销文件修改 | — | — | — | `/undo` |
+| 退出 | `/exit` / `Ctrl+C` | `/exit` | `/quit` / `Ctrl+C` | `/exit` |
 
 ### 核心指标速查
 
-| 指标 | Claude Code | Codex CLI | Gemini CLI |
-|------|------------|-----------|------------|
-| SWE-bench Verified | **80.8%** 🥇 | ~72% | ~71% |
-| Terminal-Bench 2.0 | ~68% | **77.3%** 🥇 | ~65% |
-| 上下文窗口 | ~200K | ~192K | **1M**（付费）🥇 |
-| Hooks 事件数 | **22 种** 🥇 | 2 种（实验） | 11 种 |
-| 插件 / 扩展数 | **9,000+** 🥇 | 少量（新兴） | 100+ |
-| 免费额度 | 无 | 无 | **1000 次/天** 🥇 |
-| 开源协议 | 闭源 | CLI Apache-2.0 | **Apache-2.0** 🥇 |
-| 多模态 | ❌ | ❌ | **✅** 🥇 |
-| JetBrains 原生 | ❌ | **✅** 🥇 | ❌ |
-| OS 内核级沙盒 | ❌ | **✅** 🥇 | ❌ |
-| 跨会话记忆系统 | **✅** 🥇 | ❌ | ❌ |
-| 云端异步任务 | ❌ | **✅** 🥇 | ❌ |
-| 稳定性 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ |
-| 最低月费 | $20 | $20（含 Plus） | $0 |
+| 指标 | Claude Code | Codex CLI | Gemini CLI | OpenCode |
+|------|------------|-----------|------------|----------|
+| SWE-bench Verified | **80.8%** 🥇 | ~72% | ~71% | 取决于底层模型 |
+| Terminal-Bench 2.0 | ~68% | **77.3%** 🥇 | ~65% | 取决于底层模型 |
+| 上下文窗口 | ~200K | ~192K | **1M**（付费）🥇 | 取决于底层模型 |
+| Hooks 事件数 | **22 种** 🥇 | 2 种（实验） | 11 种 | 6 种 |
+| 插件 / 扩展数 | **9,000+** 🥇 | 少量（新兴） | 100+ | npm 生态 |
+| 免费额度 | 无 | 无 | **1000 次/天** 🥇 | 取决于提供商 |
+| 开源协议 | 闭源 | CLI Apache-2.0 | Apache-2.0 | **MIT** 🥇 |
+| 多模态 | ❌ | ❌ | **✅** 🥇 | 取决于底层模型 |
+| JetBrains 原生 | ❌ | **✅** 🥇 | ❌ | ❌ |
+| OS 内核级沙盒 | ❌ | **✅** 🥇 | ❌ | Docker 沙盒 |
+| 跨会话记忆系统 | **✅** 🥇 | ❌ | ❌ | ✅（AGENTS.md）|
+| 云端异步任务 | ❌ | **✅** 🥇 | ❌ | ❌ |
+| LSP 原生支持 | ❌ | ❌ | ❌ | **✅** 🥇 |
+| 提供商无关 | ❌ | ❌ | ❌ | **✅** 🥇 |
+| 稳定性 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐⭐⭐ |
+| 最低月费 | $20 | $20（含 Plus） | $0 | $0（自带 Key）|
 
 ---
 
