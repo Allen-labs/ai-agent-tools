@@ -1,1 +1,17 @@
 CLAUDE.md
+scripts/**/local.conf
+scripts/general-agents/openclaw/backups/
+scripts/coding-agents/codex/backups/
+scripts/coding-agents/codex/bin/
+scripts/coding-agents/codex/config/
+scripts/coding-agents/codex/manifests/
+scripts/coding-agents/claude-code/backups/
+scripts/coding-agents/claude-code/config/
+scripts/coding-agents/claude-code/manifests/
+scripts/coding-agents/gemini-cli/backups/
+scripts/coding-agents/gemini-cli/config/
+scripts/coding-agents/gemini-cli/manifests/
+scripts/coding-agents/opencode/backups/
+scripts/coding-agents/opencode/bin/
+scripts/coding-agents/opencode/config/
+scripts/coding-agents/opencode/manifests/

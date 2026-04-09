@@ -1,0 +1,99 @@
+# Codex 配置样例
+# 当前脚本已实现：
+# - service install / configure / update / uninstall / check
+# - config init
+# - project trust
+# - 官方 skill / GitHub skill / 本地 skill 安装与 skills.status 快照
+#
+# 这台机器上实际观测到的 Codex 现状：
+# - 安装方式：npm 全局安装
+# - 二进制路径：/usr/bin/codex
+# - 全局目录：/root/.codex
+# - Node.js：v24.x
+
+# 一、基础安装
+# 新装一个工具时，通常只需要：
+# 1. 按需修改本文件
+# 2. 执行：bash manage.sh service install --tool-name codex --config ./coding-agents/codex/local.conf --yes
+INSTALL_METHOD=npm
+CODEX_PACKAGE=@openai/codex@latest
+
+# 二、接入与认证
+# 已有环境想迁移到这套最佳实践，通常只需要：
+# 1. 按当前真实环境修改本文件
+# 2. 执行：bash manage.sh service configure --tool-name codex --config ./coding-agents/codex/local.conf --yes
+# chatgpt: 浏览器登录
+# apikey: 直接使用 API Key
+AUTH_METHOD=chatgpt
+
+# 三、模型与运行策略
+DEFAULT_MODEL=gpt-5.4
+MODEL_REASONING_EFFORT=xhigh
+MODEL_PROVIDER=openai
+DISABLE_RESPONSE_STORAGE=1
+
+# 自定义 provider
+# 如果你像这台机器一样使用第三方 OpenAI 兼容网关，可以这样配置：
+# MODEL_PROVIDER=sss
+# PROVIDER_NAME=sss
+# API_BASE_URL=https://your-proxy.example.com/
+# PROVIDER_ENV_KEY=OPEN_API_KEY
+# PROVIDER_API_VALUE=你的第三方 API Key
+# PROVIDER_WIRE_API=responses
+PROVIDER_NAME=openai
+API_BASE_URL=
+PROVIDER_ENV_KEY=OPENAI_API_KEY
+PROVIDER_API_VALUE=
+PROVIDER_WIRE_API=responses
+
+# 四、运行目录
+# 默认会自动跟随当前仓库路径，不再单独创建额外顶层运行目录
+BACKUP_ROOT=
+
+SANDBOX_MODE=workspace-write
+APPROVAL_POLICY=on-request
+
+# trusted 项目，多个路径用逗号分隔
+# 示例：TRUST_PATHS=/root,/root/codes
+TRUST_PATHS=
+
+# 五、最佳实践初始化
+# service install / service configure 会按下面的开关与模式落地最佳实践
+ENABLE_DEFAULT_SKILLS=1
+ENABLE_DEFAULT_PLUGINS=1
+ENABLE_DEFAULT_HOOKS=1
+ENABLE_DEFAULT_MCP=1
+ENABLE_DEFAULT_AGENTS=1
+
+# 六、最佳实践模式
+# 默认先启用通用开发基线，再叠加 Codex 最核心的原生能力
+# Codex 的真实自动安装优先覆盖官方 OpenAI skills；通用能力仍通过项目模板、hooks、agents 一起落地
+COMMON_DEFAULT_PACKS=common-core,common-docs-architecture,common-quality,common-backend,common-frontend
+TOOL_DEFAULT_PACKS=codex-core,codex-review
+
+# standard：默认稳态，只启用默认包
+# advanced：启用默认包 + 进阶包
+# exploration：启用默认包 + 进阶包 + 探索包
+MODE=standard
+
+# 建议优先从 Codex 自己的 ecosystem / 前端 / 研究进阶包开始，再按需叠加通用进阶包
+ENHANCED_PACKS=codex-ecosystem,codex-frontend,codex-research,enhanced-browser-deep,enhanced-long-memory,enhanced-observability
+EXPERIMENTAL_PACKS=experimental-bleeding-edge
+
+# 七、显式补充项
+# 已装后想增强能力，一般优先两步：
+# 1. 先把 MODE 改成 advanced 或 exploration
+# 2. 再用下面这些显式项补充少量定制能力
+# 会在能力包解析结果基础上继续追加
+# Codex skill 额外支持：
+# - 官方 skill 名：gh-fix-ci
+# - GitHub 简写：github:openai/skills:skills/.curated/doc
+# - GitHub 路径：openai/skills:skills/.curated/doc
+# - GitHub URL：https://github.com/openai/skills/tree/main/skills/.curated/doc
+# - 本地路径：./skills/my-skill
+# - 如果仓库根目录不是 skill 根目录，但仓库中只有一个 `SKILL.md` 目录，脚本会自动识别
+SKILL_SPECS=
+PLUGIN_SPECS=
+HOOK_SPECS=
+MCP_SPECS=
+AGENT_SPECS=

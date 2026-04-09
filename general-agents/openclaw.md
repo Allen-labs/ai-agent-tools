@@ -22,6 +22,9 @@
 12. [移动端与设备操作](#12-移动端与设备操作)
 13. [聊天命令](#13-聊天命令)
 14. [与 Coding Agents 的区别](#14-与-coding-agents-的区别)
+15. [生产部署最佳实践](#15-生产部署最佳实践)
+16. [自动化安装方案](#16-自动化安装方案)
+17. [目录模型与权限档位](#17-目录模型与权限档位)
 
 ---
 
@@ -78,7 +81,7 @@ iwr -useb https://openclaw.ai/install.ps1 | iex
 
 ```bash
 # 引导式配置（推荐，约 2 分钟完成）
-opencode onboard --install-daemon
+openclaw onboard --install-daemon
 ```
 
 `--install-daemon` 将 Gateway 注册为系统后台服务（macOS launchd / Linux systemd / Windows schtasks），开机自动启动。
@@ -163,7 +166,7 @@ openclaw models set anthropic/claude-sonnet-4-6  # 切换模型
 
 ## 4. 渠道配置（Channels）
 
-渠道是 OpenClaw 与用户交互的入口，配置在 `openclaw.config.json` 的 `channels` 字段。
+渠道是 OpenClaw 与用户交互的入口，配置通常位于 `~/.openclaw/openclaw.json` 的 `channels` 字段。
 
 ### 4.1 支持的渠道列表
 
@@ -337,7 +340,7 @@ OpenClaw 内置自动重启机制，失效渠道会自动尝试重连：
 
 | 位置 | 说明 |
 |------|------|
-| `~/.openclaw/config.json` | 全局用户配置（默认）|
+| `~/.openclaw/openclaw.json` | 全局用户配置（默认）|
 | `OPENCLAW_CONFIG` 环境变量 | 指定自定义配置路径 |
 | Docker 挂载卷 | 容器化部署时的配置 |
 
@@ -383,7 +386,15 @@ OpenClaw 内置自动重启机制，失效渠道会自动尝试重连：
 | `{env:VAR_NAME}` | 读取环境变量 |
 | `{file:path/to/file}` | 读取文件内容 |
 
-### 6.4 会话级动态配置
+### 6.4 执行审批配置
+
+| 位置 | 说明 |
+|------|------|
+| `~/.openclaw/exec-approvals.json` | Gateway / node 命令执行审批策略 |
+| `openclaw approvals get --gateway` | 查看当前审批状态 |
+| `openclaw approvals set --gateway --file ...` | 替换审批策略 |
+
+### 6.5 会话级动态配置
 
 | 配置项 | 聊天命令 | 说明 |
 |--------|----------|------|
@@ -449,6 +460,12 @@ ClawHub 是 OpenClaw 的技能注册中心，AI 可以自动搜索和安装所�
 openclaw skills install <skill-name>  # 手动安装
 openclaw skills list                  # 查看已安装
 ```
+
+说明：
+
+- 第三方 skill 依赖 ClawHub 在线仓库
+- 如果出现 `429 Rate limit exceeded`，通常是 ClawHub 上游限流
+- 匿名状态下更容易触发限流，必要时应先执行 `clawhub login`
 
 ### 8.3 创建自定义 Skill
 
@@ -666,3 +683,229 @@ OpenClaw 和 Claude Code / Codex / Gemini CLI / OpenCode 是两类完全不同�
 *2026-03-25 · 基于官方文档（docs.openclaw.ai）、GitHub 仓库（openclaw/openclaw）及社区实践编写*
 
 *文档体系：[总导览](../README.md) · [General Agents 导引](./README.md)*
+
+---
+
+## 15. 生产部署最佳实践
+
+基于实际 VPS 部署经验，OpenClaw 在生产环境中最容易出问题的不是模型配置，而是 **Gateway 托管方式、反向代理、证书续期和插件权限**。
+
+### 15.1 推荐拓扑
+
+```text
+Internet
+   ↓
+nginx :443
+   ↓
+127.0.0.1:18789
+   ↓
+OpenClaw Gateway (systemd)
+   ↓
+Channels / Models / Skills
+```
+
+### 15.2 关键原则
+
+- **Gateway 用 systemd 托管**
+  不要用 `nohup openclaw gateway &`
+- **Gateway 仅监听 loopback**
+  公网流量统一从 `nginx` 进入
+- **有域名时用 `certbot webroot`**
+  不要优先用 `standalone`
+- **`plugins.allow` 显式声明**
+  只允许你实际使用的插件加载
+- **公网入口做限流和恶意路径拦截**
+  比“完全裸露 UI + 靠 token 硬扛”更稳
+- **UFW 默认拒绝入站**
+  只放 `22 / 80 / 443`
+
+### 15.3 飞书场景的几个高频坑
+
+- 飞书插件“已加载”不代表消息一定能进来
+- 长连接模式正确后，还要确认订阅了 `im.message.receive_v1`
+- 如果第一次消息特别慢，往往不是模型慢，而是：
+  - 飞书联系人解析权限不足
+  - 首次权限错误分支触发
+  - 会话初始化 / 预热
+
+### 15.4 性能建议
+
+- 默认保留一个“主模型”和一个“快模型”
+- 日常消息优先选响应快的模型
+- 把慢和不稳定的问题分开看：
+  - **第一次慢**：通常是权限或预热问题
+  - **后续持续慢**：通常才是模型本身的问题
+
+完整生产部署说明见：
+
+- [scripts/general-agents/openclaw/README.md](../scripts/general-agents/openclaw/README.md)
+
+## 16. 自动化安装方案
+
+为了避免每次手工配置 `OpenClaw + systemd + nginx + certbot + ufw + 飞书`，建议直接使用配置文件驱动的自动化部署包。
+
+### 16.1 目录
+
+- [README.md](../scripts/general-agents/openclaw/README.md)
+- [conf.example](../scripts/general-agents/openclaw/conf.example)
+- [manage.sh](../scripts/general-agents/openclaw/manage.sh)
+
+### 16.2 设计目标
+
+- 用一份配置文件描述部署参数
+- 支持 **无域名模式**
+- 支持 **有域名 + HTTPS 模式**
+- 支持 `ACCESS_MODE=standard`、`tailscale-private`、`tailscale-public`
+- 可选启用飞书
+- 可选启用 `ufw`
+- 自动落 `systemd` 服务
+- nginx 只管理 OpenClaw 站点文件和专用 `conf.d` 片段，不覆盖整份全局 `nginx.conf`
+- 可选预装官方 / 第三方 skills
+- 可选启用 `memory-lancedb-pro` 持久化记忆插件
+- 支持官方状态目录与项目层初始化：全局层 / 项目层
+- 支持执行权限档位：`safe` / `ops` / `admin`
+
+### 16.3 典型用法
+
+```bash
+cd scripts
+cp ./general-agents/openclaw/conf.example ./general-agents/openclaw/local.conf
+vim ./general-agents/openclaw/local.conf
+sudo bash manage.sh service install --tool-name openclaw --config ./general-agents/openclaw/local.conf
+```
+
+还可以单独使用：
+
+```bash
+cd scripts
+sudo bash manage.sh config init --tool-name openclaw --config ./general-agents/openclaw/local.conf --scope global
+sudo bash manage.sh config init --tool-name openclaw --config ./general-agents/openclaw/local.conf --scope workspace --path /path/to/workspace
+sudo bash manage.sh config apply --tool-name openclaw --config ./general-agents/openclaw/local.conf --section access --level safe
+sudo bash manage.sh config show --tool-name openclaw --config ./general-agents/openclaw/local.conf --section access
+```
+
+### 16.4 无域名模式
+
+适合：
+
+- 只用飞书 / Telegram / WhatsApp
+- 暂时不做公网 HTTPS
+
+只需要：
+
+```bash
+ACCESS_MODE=standard
+PUBLIC_MODE=public-ip
+```
+
+### 16.5 有域名模式
+
+适合：
+
+- 需要 Web UI
+- 需要 HTTPS
+
+只需要：
+
+```bash
+ACCESS_MODE=standard
+PUBLIC_MODE=public-domain
+DOMAIN=example.com
+LETSENCRYPT_EMAIL=ops@example.com
+```
+
+### 16.6 当前这套自动化更适合谁
+
+- 自己维护 VPS 的个人用户
+- 需要重复部署多台 OpenClaw 节点的人
+- 希望把“能跑”升级成“可稳定复现”的团队
+
+### 16.7 Skill 与记忆建议
+
+- 默认生产预装建议控制在 5 到 10 个高频 skill
+- 第三方 skill 很优秀，但建议直接显式维护 `SKILL_SPECS`
+- 长期记忆默认建议用 `memory-lancedb-pro`
+- 启用记忆插件前要补齐 `MEMORY_EMBEDDING_API_KEY`
+- 如果还要超长上下文保真，再额外启用 `lossless-claw`
+
+### 16.8 生命周期管理建议
+
+推荐统一使用管理入口：
+
+先记最小命令集：
+
+- `manage.sh service install --tool-name openclaw --config ...`
+- `manage.sh service configure --tool-name openclaw --config ...`
+- `manage.sh service report --tool-name openclaw --config ...`
+- `manage.sh service check --tool-name openclaw --config ...`
+- `manage.sh service logs --tool-name openclaw --config ...`
+- `manage.sh skill install --tool-name openclaw --config ...`
+- `manage.sh plugin install --tool-name openclaw --config ...`
+- `manage.sh feishu check --tool-name openclaw --config ...`
+
+高级命令再按需使用：
+
+- `manage.sh service update --tool-name openclaw --config ...`
+- `manage.sh service diff --tool-name openclaw --config ...`
+- `manage.sh service status --tool-name openclaw --config ...`
+- `manage.sh service restart --tool-name openclaw --config ...`
+- `manage.sh service reload --tool-name openclaw --config ...`
+- `manage.sh service enable --tool-name openclaw --config ...`
+- `manage.sh service disable --tool-name openclaw --config ...`
+- `manage.sh service cert --tool-name openclaw --config ...`
+- `manage.sh service uninstall --tool-name openclaw --config ...`
+- `manage.sh config backup --tool-name openclaw --config ...`
+- `manage.sh config restore --tool-name openclaw --config ... --path ...`
+- `manage.sh config init --tool-name openclaw --config ... --scope global|workspace`
+- `manage.sh config apply --tool-name openclaw --config ... --section access --level safe|ops|admin`
+- `manage.sh config show --tool-name openclaw --config ... --section access`
+- `manage.sh skill remove --tool-name openclaw --config ... --name ...`
+- `manage.sh skill check --tool-name openclaw --config ...`
+- `manage.sh skill recommend --tool-name openclaw --config ...`
+- `manage.sh plugin remove --tool-name openclaw --config ... --name ...`
+- `manage.sh feishu guide --tool-name openclaw`
+
+这样比单纯的一次性安装脚本更适合长期维护，尤其是：
+
+- 要反复调整飞书接入
+- 要在有域名 / 无域名之间切换
+- 要重跑 nginx / certbot / firewall
+- 要分批增加 skill / plugin
+
+另外：
+
+- 不再单独保留 `skill sync`，统一用 `skill install`
+- 不再单独保留 `plugin sync`，统一用 `plugin install`
+- `service report` 看概览，`service status` 看原始 systemd 详情，`service check` 做完整排障
+
+## 17. 目录模型与权限档位
+
+脚本直接管理 OpenClaw 官方状态目录 `~/.openclaw`，工具侧只保留 `scripts/general-agents/openclaw` 目录内的脚本、静态包装脚本和默认备份目录，不再额外保留 `.runtime` 这一层。
+
+官方状态目录：
+
+- `~/.openclaw/openclaw.json`
+- `~/.openclaw/exec-approvals.json`
+- `~/.openclaw/skills`
+- `~/.openclaw/extensions`
+
+工具目录：
+
+- `<repo>/scripts/general-agents/openclaw/bin`
+- `<repo>/scripts/general-agents/openclaw/backups`
+
+项目级最小结构：
+
+- `<workspace>/skills`
+- `<workspace>/.openclaw/config`
+- `<workspace>/.openclaw/data`
+- `<workspace>/.openclaw/logs`
+
+执行权限三档：
+
+- `safe`
+  - 低风险读操作、日志读取、健康检查
+- `ops`
+  - 在 `safe` 基础上增加服务状态、网关日志、`nginx -t`
+- `admin`
+  - 在 `ops` 基础上增加受控的服务重启 / 重载，以及 `openclaw` CLI

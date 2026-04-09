@@ -1,0 +1,90 @@
+# Claude Code 配置样例
+# 当前脚本已实现：
+# - service install / configure / update / uninstall / check
+# - config init
+# - 官方 marketplace plugin 安装与 plugins.status 快照
+#
+# 这台机器上实际观测到的 Claude Code 现状：
+# - 安装方式：npm 全局安装
+# - 二进制路径：/usr/bin/claude
+# - 全局目录：/root/.claude
+# - 当前接法：ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL
+
+# 一、基础安装
+# 新装一个工具时，通常只需要：
+# 1. 按需修改本文件
+# 2. 执行：bash manage.sh service install --tool-name claude-code --config ./coding-agents/claude-code/local.conf --yes
+INSTALL_METHOD=npm
+CLAUDE_PACKAGE=@anthropic-ai/claude-code@latest
+
+# 二、接入与认证
+# 已有环境想迁移到这套最佳实践，通常只需要：
+# 1. 按当前真实环境修改本文件
+# 2. 执行：bash manage.sh service configure --tool-name claude-code --config ./coding-agents/claude-code/local.conf --yes
+# api-key: 官方或兼容网关的 API Key
+# auth-token: Bearer Token / 长令牌模式
+AUTH_MODE=api-key
+
+# 三、模型与访问
+DEFAULT_MODEL=claude-sonnet-4-6
+
+# 二选一填写
+ANTHROPIC_API_KEY=
+ANTHROPIC_AUTH_TOKEN=
+
+# 第三方网关 / 代理
+ANTHROPIC_BASE_URL=
+API_TIMEOUT_MS=600000
+CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+
+# 四、运行目录
+# 默认会自动跟随当前仓库路径，不再单独创建额外顶层运行目录
+BACKUP_ROOT=
+
+# 可选权限模板，多个用逗号分隔
+# 配置文件按 KEY=value 读取，像 Bash(git:*) 这类权限串可以直接写
+# 示例：
+# PERMISSIONS_ALLOW=Bash(git:*),Bash(npm:*),Read,Glob,Grep
+PERMISSIONS_ALLOW=
+PERMISSIONS_DENY=
+
+# 五、最佳实践初始化
+# service install / service configure 会按下面的开关与模式落地最佳实践
+ENABLE_DEFAULT_SKILLS=1
+ENABLE_DEFAULT_PLUGINS=1
+ENABLE_DEFAULT_HOOKS=1
+ENABLE_DEFAULT_MCP=1
+ENABLE_DEFAULT_AGENTS=1
+
+# 六、最佳实践模式
+# 默认先给 Claude Code 一套通用开发基线，再补工作流与评审能力
+# 当前默认 plugin 会优先选择官方 marketplace 中可直接自动安装的项
+COMMON_DEFAULT_PACKS=common-core,common-docs-architecture,common-quality,common-backend,common-frontend
+TOOL_DEFAULT_PACKS=claude-workflow,claude-review
+
+# standard：默认稳态，只启用默认包
+# advanced：启用默认包 + 进阶包
+# exploration：启用默认包 + 进阶包 + 探索包
+MODE=standard
+
+# 建议优先启用 Claude Code 自己的 UI / memory / ecosystem 进阶包，再按需叠加通用进阶包
+ENHANCED_PACKS=claude-ui,claude-memory,claude-ecosystem,enhanced-browser-deep,enhanced-long-memory,enhanced-observability
+EXPERIMENTAL_PACKS=experimental-bleeding-edge
+
+# 七、显式补充项
+# 已装后想增强能力，一般优先两步：
+# 1. 先把 MODE 改成 advanced 或 exploration
+# 2. 再用下面这些显式项补充少量定制能力
+# 会在能力包解析结果基础上继续追加
+# Claude Code plugin 支持三类写法：
+# 1. 官方 marketplace：superpowers
+# 2. 显式 plugin + 第三方来源：planning-with-files@github:OthmanAdi/planning-with-files
+# 3. 仅第三方来源（适合该 marketplace 只暴露一个 plugin 时）：github:OthmanAdi/planning-with-files
+# 说明：
+# - 第三方来源会先尝试接入 marketplace，再解析可安装 plugin
+# - 如果一个 marketplace 暴露多个 plugin，建议显式写成 plugin@source
+SKILL_SPECS=
+PLUGIN_SPECS=
+HOOK_SPECS=
+MCP_SPECS=
+AGENT_SPECS=

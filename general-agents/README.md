@@ -102,7 +102,7 @@ openclaw onboard --install-daemon
 
 | 配置项 | 路径 |
 |--------|------|
-| 全局配置 | `~/.openclaw/config.json` |
+| 全局配置 | `~/.openclaw/openclaw.json` |
 | Skills 目录 | `~/.openclaw/skills/` |
 | 日志目录 | `~/.openclaw/logs/` |
 | 凭证目录 | `~/.openclaw/credentials/` |

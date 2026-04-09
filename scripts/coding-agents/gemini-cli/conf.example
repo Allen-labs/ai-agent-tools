@@ -1,0 +1,79 @@
+# Gemini CLI 配置样例
+# 当前脚本首批已实现：
+# - service install / configure / update / uninstall / check
+# - config init
+
+# 一、基础安装
+# 新装一个工具时，通常只需要：
+# 1. 按需修改本文件
+# 2. 执行：bash manage.sh service install --tool-name gemini-cli --config ./coding-agents/gemini-cli/local.conf --yes
+INSTALL_METHOD=npm
+GEMINI_PACKAGE=@google/gemini-cli@latest
+
+# 二、接入与认证
+# 已有环境想迁移到这套最佳实践，通常只需要：
+# 1. 按当前真实环境修改本文件
+# 2. 执行：bash manage.sh service configure --tool-name gemini-cli --config ./coding-agents/gemini-cli/local.conf --yes
+# api-key: 使用 GEMINI_API_KEY / GOOGLE_API_KEY
+# vertex-ai: 使用 GOOGLE_CLOUD_PROJECT 等环境变量
+AUTH_MODE=api-key
+
+# 三、模型与运行策略
+DEFAULT_MODEL=gemini-2.5-pro
+
+# Key / Vertex AI
+GEMINI_API_KEY=
+GOOGLE_API_KEY=
+GOOGLE_CLOUD_PROJECT=
+GOOGLE_CLOUD_LOCATION=us-central1
+GOOGLE_GENAI_USE_VERTEXAI=false
+
+# 安全与策略
+POLICY_MODE=balanced
+TOOL_SANDBOXING=0
+FOLDER_TRUST_ENABLED=1
+
+# 四、运行目录
+# 默认会自动跟随当前仓库路径，不再单独创建额外顶层运行目录
+BACKUP_ROOT=
+
+# 五、最佳实践初始化
+# service install / service configure 会按下面的开关与模式落地最佳实践
+# 其中扩展目录会准备到 ~/.gemini/extensions
+# service install / configure 会尝试安装第一批官方 extension
+ENABLE_DEFAULT_SKILLS=1
+ENABLE_DEFAULT_PLUGINS=1
+ENABLE_DEFAULT_HOOKS=1
+ENABLE_DEFAULT_MCP=1
+ENABLE_DEFAULT_AGENTS=1
+
+# 六、最佳实践模式
+# 默认先启用通用开发基线，再补 Gemini CLI 最核心的协作能力
+COMMON_DEFAULT_PACKS=common-core,common-docs-architecture,common-quality,common-backend,common-frontend
+TOOL_DEFAULT_PACKS=gemini-core,gemini-collaboration
+
+# standard：默认稳态，只启用默认包
+# advanced：启用默认包 + 进阶包
+# exploration：启用默认包 + 进阶包 + 探索包
+MODE=standard
+
+# 建议优先启用 Gemini 自己的 UI / data 进阶包，再按需叠加通用进阶包
+ENHANCED_PACKS=gemini-ui,gemini-data,enhanced-browser-deep,enhanced-background-agents,enhanced-observability
+EXPERIMENTAL_PACKS=experimental-bleeding-edge
+
+# 七、显式补充项
+# 已装后想增强能力，一般优先两步：
+# 1. 先把 MODE 改成 advanced 或 exploration
+# 2. 再用下面这些显式项补充少量定制能力
+# 会在能力包解析结果基础上继续追加
+# Gemini 扩展支持五种写法：
+# 1. 官方名称：workspace,stitch,flutter
+# 2. GitHub 简写：github:your-org/your-extension
+# 3. GitHub 仓库：your-org/your-extension
+# 4. GitHub URL：https://github.com/your-org/your-extension
+# 5. 本地路径：./extensions/your-extension
+SKILL_SPECS=
+PLUGIN_SPECS=
+HOOK_SPECS=
+MCP_SPECS=
+AGENT_SPECS=

@@ -1,0 +1,164 @@
+# OpenClaw 配置样例
+
+# 一、基础接入场景
+# 新装一个 OpenClaw 服务时，通常只需要：
+# 1. 先修改这一段
+# 2. 执行：bash manage.sh service install --tool-name openclaw --config ./general-agents/openclaw/local.conf --yes
+#
+# 已有服务想迁移或重放到这套推荐基线时，通常只需要：
+# 1. 按真实现网环境修改这一段
+# 2. 执行：bash manage.sh service configure --tool-name openclaw --config ./general-agents/openclaw/local.conf --yes
+
+# 访问模式
+# 访问模式：
+# - standard: 现在这种公网模式
+# - tailscale-private: 通过 Tailscale 客户端访问
+# - tailscale-public: 通过 Tailscale 提供的公网入口访问
+ACCESS_MODE=standard
+
+# standard 模式下的公网类型
+# - public-ip: 有公网 IP，无域名
+# - public-domain: 有公网 IP，有域名
+PUBLIC_MODE=public-domain
+DOMAIN=
+LETSENCRYPT_EMAIL=
+GATEWAY_TOKEN=replace-with-strong-token
+
+# 二、常用开关
+ENABLE_FEISHU=0
+ENABLE_UFW=1
+TAILSCALE_AUTH_KEY=
+TAILSCALE_HOSTNAME=openclaw-node
+
+# 三、模型接入
+MODEL_BASE_URL=https://coding.dashscope.aliyuncs.com/v1
+MODEL_PROVIDER_API=openai-completions
+MODEL_PRIMARY=openai/kimi-k2.5
+MODEL_FAST=openai/qwen3.5-plus
+MODEL_ALT_1=openai/glm-5
+MODEL_ALT_2=openai/MiniMax-M2.5
+
+# 四、飞书接入
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_VERIFICATION_TOKEN=
+FEISHU_ENCRYPT_KEY=
+FEISHU_REQUIRE_MENTION=0
+FEISHU_DM_POLICY=open
+FEISHU_STREAMING=1
+
+# 五、默认自动化与最佳实践
+# 1. SKILL_SPECS 为空时，如果你已经登录 ClawHub，则自动安装一组默认 skill
+# 2. 如不想自动安装默认 skill，设为 0
+# 3. 如你自己显式填写了 SKILL_SPECS，则优先使用你写的内容
+ENABLE_DEFAULT_SKILLS=1
+SKILL_SPECS=
+PLUGIN_SPECS=
+
+# 六、官方搜索能力
+# 有 API Key 时优先用官方集成，通常比社区 skill 更稳定
+TAVILY_API_KEY=
+FIRECRAWL_API_KEY=
+ENABLE_TAVILY_TOOL=0
+TAVILY_BASE_URL=https://api.tavily.com
+ENABLE_FIRECRAWL_TOOL=0
+FIRECRAWL_BASE_URL=https://api.firecrawl.dev
+FIRECRAWL_ONLY_MAIN_CONTENT=1
+FIRECRAWL_MAX_AGE_MS=172800000
+FIRECRAWL_TIMEOUT_SECONDS=60
+
+# 七、插件与增强
+PLUGINS_ALLOW=openclaw-lark
+OPENCLAW_LARK_PACKAGE=
+
+# 八、长期记忆
+# 生产默认建议：启用 memory-lancedb-pro
+# 启用前必须填写 MEMORY_EMBEDDING_API_KEY
+ENABLE_MEMORY_PLUGIN=1
+MEMORY_PLUGIN=memory-lancedb-pro
+MEMORY_PLUGIN_PACKAGE=memory-lancedb-pro@beta
+MEMORY_EMBEDDING_API_KEY=
+MEMORY_EMBEDDING_BASE_URL=
+MEMORY_EMBEDDING_MODEL=text-embedding-3-small
+MEMORY_DB_PATH=/root/.openclaw/memory/lancedb-pro
+MEMORY_AUTO_CAPTURE=0
+MEMORY_AUTO_RECALL=1
+MEMORY_CAPTURE_MAX_CHARS=500
+MEMORY_SMART_EXTRACTION=1
+MEMORY_EXTRACT_MIN_MESSAGES=2
+MEMORY_EXTRACT_MAX_CHARS=8000
+MEMORY_SESSION_MEMORY_ENABLED=0
+
+# 九、长上下文增强
+ENABLE_CONTEXT_ENGINE=0
+CONTEXT_ENGINE=lossless-claw
+CONTEXT_ENGINE_PACKAGE=@martian-engineering/lossless-claw
+LOSSLESS_DATABASE_PATH=/root/.openclaw/lossless-claw/lossless-claw.db
+LOSSLESS_FRESH_TAIL_COUNT=64
+LOSSLESS_LEAF_CHUNK_TOKENS=20000
+LOSSLESS_NEW_SESSION_RETAIN_DEPTH=2
+LOSSLESS_CONTEXT_THRESHOLD=0.75
+LOSSLESS_INCREMENTAL_MAX_DEPTH=1
+LOSSLESS_IGNORE_SESSION_PATTERNS=agent:*:cron:**
+LOSSLESS_SUMMARY_MODEL=
+LOSSLESS_SUMMARY_PROVIDER=
+LOSSLESS_EXPANSION_MODEL=
+LOSSLESS_EXPANSION_PROVIDER=
+LOSSLESS_DELEGATION_TIMEOUT_MS=300000
+
+# 十、运行目录与权限
+OPENCLAW_USER=root
+OPENCLAW_HOME=/root
+OPENCLAW_STATE_DIR=/root/.openclaw
+OPENCLAW_CONFIG_PATH=/root/.openclaw/openclaw.json
+# 备份目录，留空时默认使用 <repo>/scripts/general-agents/openclaw/backups
+BACKUP_ROOT=
+PERMISSIONS_LEVEL=safe
+
+# 十一、Gateway
+GATEWAY_PORT=18789
+GATEWAY_AUTH_MODE=token
+CONTROL_UI_ALLOWED_ORIGINS=
+
+# 十二、访问说明
+# ACCESS_MODE=standard:
+#   默认模式，保持你现在这种部署方式
+# ACCESS_MODE=tailscale-private:
+#   访问端需要安装 Tailscale 客户端，并登录同一 tailnet
+# ACCESS_MODE=tailscale-public:
+#   访问端不需要安装客户端，通过 Tailscale 公网入口访问
+
+# 十三、显式补充项
+# 已装后想增强能力，一般优先两步：
+# 1. 先改上面的访问、模型、飞书、记忆等目标项
+# 2. 再用下面这些显式项补充指定 skill / plugin
+#
+# 高级插件安装规格
+# 插件安装规格，逗号分隔：
+# - npm:<package>
+# - clawhub:<package>
+# - file:/path/to/plugin.tgz
+# 逗号分隔，支持：
+# - clawhub:<skill-name>
+# - git:https://github.com/org/repo.git[#ref][::subdir]
+# - dir:/abs/path/to/skill-dir
+# - archive:/abs/path/to/skill.zip
+
+# ClawHub 账号说明：
+# 1. 先去 https://clawhub.com 注册账号
+# 2. 终端执行：clawhub login
+# 3. 如已有 token：clawhub login --token <token>
+# 4. 匿名状态更容易触发 429，批量安装时建议先登录
+# 如 skill 依赖已被脚本内置支持，可直接执行：
+# bash manage.sh skill install --config ./local.conf
+# 默认技能集：
+# clawhub:find-skill,clawhub:github,clawhub:gh-issues,clawhub:session-logs,clawhub:video-frames
+# ClawHub 示例：
+# SKILL_SPECS=clawhub:github,clawhub:gh-issues,clawhub:session-logs,clawhub:video-frames,clawhub:openclaw-tavily-search
+# GitHub 示例：
+# SKILL_SPECS=git:https://github.com/example/openclaw-skill.git,git:https://github.com/example/skills.git#main::skills/github
+# 本地目录 / 压缩包示例：
+# SKILL_SPECS=dir:/root/skills/openclaw-skill,archive:/root/packages/openclaw-skill.zip
+
+# 十四、systemd
+SYSTEMD_SERVICE_NAME=openclaw-gateway

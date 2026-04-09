@@ -9,6 +9,25 @@
 ```
 ai-agent-tools/
 ├── README.md                  ← 本文（总导览）
+├── scripts/
+│   ├── manage.sh              ← 顶层统一入口
+│   ├── README.md              ← 可执行脚本与运维入口总览
+│   ├── shared/
+│   │   └── lib/
+│   ├── general-agents/
+│   │   ├── README.md
+│   │   └── openclaw/
+│   │       ├── README.md      ← OpenClaw 安装与运维脚本入口
+│   │       ├── manage.sh      ← OpenClaw 主入口
+│   │       ├── conf.example   ← OpenClaw 配置样例
+│   │       └── lib/
+│   └── coding-agents/
+│       ├── README.md
+│       ├── manage.sh
+│       ├── claude-code/
+│       ├── codex/
+│       ├── gemini-cli/
+│       └── opencode/
 ├── coding-agents/
 │   ├── README.md              ← Coding Agents 选型对比指南
 │   ├── claude-code.md         ← Claude Code 完整指南
@@ -56,6 +75,36 @@ ai-agent-tools/
 **需要随时随地用手机和 AI 交互、处理日常任务？** → [General Agents](./general-agents/README.md)
 
 两类工具互补而非替代，可以同时使用：OpenClaw 处理日常提醒和信息查询，Claude Code / OpenCode 处理具体编程任务。
+
+---
+
+## Scripts
+
+如果你需要直接安装、更新或运维某个工具，请优先看：
+
+- [Scripts 总览](./scripts/README.md)
+- [OpenClaw Scripts](./scripts/general-agents/openclaw/README.md)
+- 变更脚本后先执行：`cd scripts && bash manage.sh tool review`
+
+当前 OpenClaw 脚本已覆盖：
+
+- 安装、更新、配置重放、状态检查、备份恢复
+- 飞书接入检查与流式输出配置
+- skill / plugin 的依赖安装、检查、移除
+- 官方状态目录 / 项目层初始化：全局层 / 项目层
+- 工具侧生成的备份与静态包装脚本默认写回 `scripts/general-agents/openclaw`
+- 执行权限三档：`safe` / `ops` / `admin`
+
+当前 Coding Agents 脚本已覆盖：
+
+- `claude-code`、`codex`、`gemini-cli`、`opencode`
+- 日常优先使用 `service install`、`config init`、`service check`
+- `service configure/update/uninstall` 作为可选运维命令保留
+- `codex` 额外保留 `project trust`
+- 官方状态目录保持各工具默认位置，备份、清单和包装命令默认写回各自工具目录
+- 已支持初始化全局 / 项目记忆文档、官方目录骨架和运行清单
+- 扩展目录与清单由安装或初始化阶段自动准备，独立扩展安装器留到下一阶段
+- `service check` 已支持直接对比当前配置与目标配置，优先用于安全检查，不会直接覆盖现有配置
 
 ---
 
