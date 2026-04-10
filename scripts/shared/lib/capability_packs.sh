@@ -41,7 +41,7 @@ claude-code|claude-ecosystem|plugin|security-guidance
 claude-code|claude-ui|plugin|frontend-design
 claude-code|claude-ui|plugin|figma
 claude-code|claude-ui|plugin|playwright
-claude-code|claude-memory|plugin|claude-mem
+claude-code|claude-memory|plugin|remember
 claude-code|claude-memory|plugin|code-simplifier
 claude-code|claude-memory|agent|memory-curator
 codex|codex-core|skill|gh-fix-ci
@@ -68,10 +68,7 @@ gemini-cli|gemini-ui|plugin|stitch
 gemini-cli|gemini-ui|plugin|flutter
 gemini-cli|gemini-data|plugin|cloud-sql-postgresql
 gemini-cli|gemini-data|plugin|bigquery-data-analytics
-opencode|opencode-core|plugin|opencode-skillful
-opencode|opencode-core|plugin|opencode-shell-strategy
 opencode|opencode-core|plugin|opencode-vibeguard
-opencode|opencode-workspace|plugin|opencode-workspace
 opencode|opencode-workspace|plugin|opencode-worktree
 opencode|opencode-workspace|agent|planner
 opencode|opencode-workspace|agent|reviewer
@@ -158,7 +155,7 @@ claude-code|plugin|context7|tool-ecosystem|repl-plugin|medium
 claude-code|plugin|frontend-design|third-party|repl-plugin|low
 claude-code|plugin|figma|tool-ecosystem|repl-plugin|medium
 claude-code|plugin|playwright|tool-ecosystem|repl-plugin|medium
-claude-code|plugin|claude-mem|third-party|repl-plugin|medium
+claude-code|plugin|remember|third-party|repl-plugin|medium
 claude-code|plugin|code-simplifier|third-party|repl-plugin|low
 codex|skill|gh-fix-ci|tool-ecosystem|skill-installer|medium
 codex|skill|gh-address-comments|tool-ecosystem|skill-installer|medium
@@ -180,10 +177,7 @@ gemini-cli|plugin|stitch|tool-ecosystem|extensions-install|medium
 gemini-cli|plugin|flutter|tool-ecosystem|extensions-install|medium
 gemini-cli|plugin|cloud-sql-postgresql|external-service|extensions-install|high
 gemini-cli|plugin|bigquery-data-analytics|external-service|extensions-install|high
-opencode|plugin|opencode-skillful|tool-ecosystem|config-plugin|medium
-opencode|plugin|opencode-shell-strategy|tool-ecosystem|config-plugin|medium
 opencode|plugin|opencode-vibeguard|tool-ecosystem|config-plugin|medium
-opencode|plugin|opencode-workspace|tool-ecosystem|config-plugin|low
 opencode|plugin|opencode-worktree|tool-ecosystem|config-plugin|low
 opencode|plugin|opencode-background-agents|tool-ecosystem|config-plugin|medium
 opencode|plugin|opencode-supermemory|third-party|config-plugin|medium
@@ -256,6 +250,30 @@ capability_item_metadata() {
     printf '%s|%s|%s\n' "${source_class}" "${install_mode}" "${risk_level}"
     break
   done
+}
+
+capability_known_items_csv() {
+  local tool_name="${1:-}"
+  local target_type="${2:-}"
+
+  capability_item_catalog | while IFS='|' read -r scope catalog_type catalog_item _source_class _install_mode _risk_level; do
+    [[ "${catalog_type}" == "${target_type}" ]] || continue
+    capability_pack_matches_tool "${scope}" "${tool_name}" || continue
+    printf '%s\n' "${catalog_item}"
+  done | awk '!seen[$0]++' | paste -sd, -
+}
+
+capability_known_items_csv_by_install_mode() {
+  local tool_name="${1:-}"
+  local target_type="${2:-}"
+  local target_install_mode="${3:-}"
+
+  capability_item_catalog | while IFS='|' read -r scope catalog_type catalog_item _source_class install_mode _risk_level; do
+    [[ "${catalog_type}" == "${target_type}" ]] || continue
+    [[ "${install_mode}" == "${target_install_mode}" ]] || continue
+    capability_pack_matches_tool "${scope}" "${tool_name}" || continue
+    printf '%s\n' "${catalog_item}"
+  done | awk '!seen[$0]++' | paste -sd, -
 }
 
 capability_item_manifest_line() {
@@ -392,6 +410,7 @@ resolve_capability_items_csv() {
   local experimental_packs="${7:-}"
   local experimental_enabled="${8:-0}"
   local explicit_specs="${9:-}"
+  local exclude_specs="${10:-}"
   local resolved=""
 
   resolved="$(capability_pack_items_csv "${tool_name}" "${target_type}" "${common_packs}" "${tool_packs}")"
@@ -405,6 +424,7 @@ resolve_capability_items_csv() {
   fi
 
   resolved="$(csv_merge_unique "${resolved}" "${explicit_specs}")"
+  resolved="$(csv_subtract "${resolved}" "${exclude_specs}")"
   printf '%s' "${resolved}"
 }
 
@@ -419,6 +439,7 @@ resolve_installable_capability_items_csv() {
   local experimental_packs="${8:-}"
   local experimental_enabled="${9:-0}"
   local explicit_specs="${10:-}"
+  local exclude_specs="${11:-}"
   local resolved=""
 
   resolved="$(capability_pack_items_csv_by_install_mode "${tool_name}" "${target_type}" "${target_install_mode}" "${common_packs}" "${tool_packs}")"
@@ -432,5 +453,6 @@ resolve_installable_capability_items_csv() {
   fi
 
   resolved="$(csv_merge_unique "${resolved}" "${explicit_specs}")"
+  resolved="$(csv_subtract "${resolved}" "${exclude_specs}")"
   printf '%s' "${resolved}"
 }

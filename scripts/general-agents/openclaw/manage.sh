@@ -198,6 +198,7 @@ ensure_tool_layout() {
   init_tool_layout_vars
   mkdir -p "${BACKUP_ROOT}"
   mkdir -p "${OPENCLAW_STATE_DIR}" "${OPENCLAW_STATE_DIR}/skills" "${OPENCLAW_STATE_DIR}/extensions"
+  openclaw_render_governance_files_if_missing
 }
 
 apply_project_layout() {
@@ -1406,6 +1407,11 @@ config_backup_action() {
   if [[ -f "${OPENCLAW_CONFIG_PATH}" ]]; then
     cp -a "${OPENCLAW_CONFIG_PATH}" "${backup_dir}/openclaw.json"
   fi
+  for governance_name in GOVERNANCE.md ENGINEERING.md DELIVERY.md MEMORY-RULES.md; do
+    if [[ -f "${OPENCLAW_STATE_DIR}/${governance_name}" ]]; then
+      cp -a "${OPENCLAW_STATE_DIR}/${governance_name}" "${backup_dir}/${governance_name}"
+    fi
+  done
   if [[ -f "${OPENCLAW_STATE_DIR}/exec-approvals.json" ]]; then
     cp -a "${OPENCLAW_STATE_DIR}/exec-approvals.json" "${backup_dir}/exec-approvals.json"
   fi
@@ -1442,6 +1448,12 @@ config_restore_action() {
     mkdir -p "$(dirname "${OPENCLAW_CONFIG_PATH}")"
     cp -a "${backup_dir}/openclaw.json" "${OPENCLAW_CONFIG_PATH}"
   fi
+  for governance_name in GOVERNANCE.md ENGINEERING.md DELIVERY.md MEMORY-RULES.md; do
+    if [[ -f "${backup_dir}/${governance_name}" ]]; then
+      mkdir -p "${OPENCLAW_STATE_DIR}"
+      cp -a "${backup_dir}/${governance_name}" "${OPENCLAW_STATE_DIR}/${governance_name}"
+    fi
+  done
   if [[ -f "${backup_dir}/exec-approvals.json" ]]; then
     mkdir -p "${OPENCLAW_STATE_DIR}"
     cp -a "${backup_dir}/exec-approvals.json" "${OPENCLAW_STATE_DIR}/exec-approvals.json"
@@ -1765,6 +1777,10 @@ config_init_global_action() {
     die "已取消。"
   fi
   ensure_tool_layout
+  log info "已准备治理文件：${OPENCLAW_STATE_DIR}/GOVERNANCE.md"
+  log info "已准备工程规范：${OPENCLAW_STATE_DIR}/ENGINEERING.md"
+  log info "已准备交付检查单：${OPENCLAW_STATE_DIR}/DELIVERY.md"
+  log info "已准备记忆规则：${OPENCLAW_STATE_DIR}/MEMORY-RULES.md"
   log ok "OpenClaw 官方状态目录和工具备份目录初始化完成。"
 }
 

@@ -6,26 +6,79 @@ timestamp() {
   date '+%Y-%m-%d %H:%M:%S'
 }
 
+common_ensure_colors() {
+  [[ -n "${HELP_RESET+x}" ]] || help_init_colors
+}
+
+common_translate_report_value() {
+  local value="${1:-}"
+
+  case "${value}" in
+    present)
+      value="已存在"
+      ;;
+    missing)
+      value="缺失"
+      ;;
+  esac
+
+  value="${value//(present)/(已存在)}"
+  value="${value//(missing)/(缺失)}"
+  printf '%s' "${value}"
+}
+
+common_style_report_value() {
+  local value=""
+  value="$(common_translate_report_value "${1:-}")"
+
+  case "${value}" in
+    bash\ manage.sh*|manage.sh*)
+      printf '%s%s%s' "${HELP_BLUE}" "${value}" "${HELP_RESET}"
+      ;;
+    已安装|已启用|已存在|一致|通过|当前状态正常|推荐基线已就绪|增强基线已启用)
+      printf '%s%s%s' "${HELP_GREEN}" "${value}" "${HELP_RESET}"
+      ;;
+    缺失|未安装|未配置|未启用|失败|需人工登录或授权|需人工处理)
+      printf '%s%s%s' "${HELP_RED}" "${value}" "${HELP_RESET}"
+      ;;
+    不一致|未生效|待授权|推荐基线待补齐|工具清单缺失)
+      printf '%s%s%s' "${HELP_YELLOW}" "${value}" "${HELP_RESET}"
+      ;;
+    *)
+      printf '%s' "${value}"
+      ;;
+  esac
+}
+
 log_info() {
-  printf '[%s] [INFO] %s\n' "$(timestamp)" "$*"
+  common_ensure_colors
+  printf '%s[%s]%s %s[INFO]%s %s\n' "${HELP_DIM}" "$(timestamp)" "${HELP_RESET}" "${HELP_BLUE}" "${HELP_RESET}" "$*"
 }
 
 log_warn() {
-  printf '[%s] [WARN] %s\n' "$(timestamp)" "$*" >&2
+  common_ensure_colors
+  printf '%s[%s]%s %s[WARN]%s %s\n' "${HELP_DIM}" "$(timestamp)" "${HELP_RESET}" "${HELP_YELLOW}" "${HELP_RESET}" "$*" >&2
 }
 
 log_error() {
-  printf '[%s] [ERROR] %s\n' "$(timestamp)" "$*" >&2
+  common_ensure_colors
+  printf '%s[%s]%s %s[ERROR]%s %s\n' "${HELP_DIM}" "$(timestamp)" "${HELP_RESET}" "${HELP_RED}" "${HELP_RESET}" "$*" >&2
 }
 
 print_section() {
-  printf '\n== %s ==\n' "$*"
+  common_ensure_colors
+  printf '\n%s%s%s\n' "${HELP_BOLD}${HELP_WHITE}" "$*" "${HELP_RESET}"
+  printf '%s%s%s\n' "${HELP_DIM}" "$(help_repeat_char "-" 62)" "${HELP_RESET}"
 }
 
 print_report_line() {
   local key="$1"
   local value="$2"
-  printf '  %-24s %s\n' "${key}" "${value}"
+  local styled_value=""
+
+  common_ensure_colors
+  styled_value="$(common_style_report_value "${value}")"
+  printf '  %s%-24s%s %s\n' "${HELP_BLUE}" "${key}" "${HELP_RESET}" "${styled_value}"
 }
 
 supports_color() {
@@ -44,12 +97,18 @@ help_init_colors() {
     HELP_DIM=$'\033[2m'
     HELP_WHITE=$'\033[97m'
     HELP_BLUE=$'\033[38;2;5;80;174m'
+    HELP_GREEN=$'\033[38;2;32;140;72m'
+    HELP_YELLOW=$'\033[38;2;176;123;0m'
+    HELP_RED=$'\033[38;2;180;62;62m'
   else
     HELP_RESET=''
     HELP_BOLD=''
     HELP_DIM=''
     HELP_WHITE=''
     HELP_BLUE=''
+    HELP_GREEN=''
+    HELP_YELLOW=''
+    HELP_RED=''
   fi
 }
 
@@ -188,6 +247,33 @@ append_reason_text() {
   fi
 }
 
+sensitive_endpoint_display_value() {
+  local value="${1:-}"
+  local empty_label="${2:-未配置}"
+  local configured_label="${3:-已配置（已脱敏）}"
+
+  case "${value}" in
+    ""|未配置|未声明|未检测到)
+      printf '%s' "${empty_label}"
+      ;;
+    *)
+      printf '%s' "${configured_label}"
+      ;;
+  esac
+}
+
+sensitive_presence_display_value() {
+  local value="${1:-}"
+  local empty_label="${2:-缺失}"
+  local configured_label="${3:-已配置（已脱敏）}"
+
+  if [[ -n "${value}" ]]; then
+    printf '%s' "${configured_label}"
+  else
+    printf '%s' "${empty_label}"
+  fi
+}
+
 pack_strategy_summary() {
   local common_packs="${1:-}"
   local tool_packs="${2:-}"
@@ -274,6 +360,33 @@ csv_merge_unique() {
 
   [[ -n "${merged}" ]] || return 0
   csv_clean_lines "${merged}" | awk '!seen[$0]++' | paste -sd, -
+}
+
+csv_subtract() {
+  local source_csv="${1:-}"
+  local remove_csv="${2:-}"
+
+  [[ -n "${source_csv}" ]] || return 0
+  if [[ -z "${remove_csv}" ]]; then
+    csv_merge_unique "${source_csv}"
+    return 0
+  fi
+
+  awk '
+    NR == FNR {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "") {
+        remove[$0] = 1
+      }
+      next
+    }
+    {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0)
+      if ($0 != "" && !remove[$0] && !seen[$0]++) {
+        print $0
+      }
+    }
+  ' <(csv_clean_lines "${remove_csv}") <(csv_clean_lines "${source_csv}") | paste -sd, -
 }
 
 path_state() {
@@ -660,6 +773,7 @@ write_capability_manifest() {
   local enhanced_enabled="${11:-0}"
   local experimental_packs="${12:-}"
   local experimental_enabled="${13:-0}"
+  local exclude_specs="${14:-}"
   local resolved_specs=""
   local mode="disabled"
   local item_count="0"
@@ -669,7 +783,7 @@ write_capability_manifest() {
   mkdir -p "$(dirname "${path}")"
 
   if [[ "${enabled}" == "1" ]]; then
-    resolved_specs="$(resolve_capability_items_csv "${tool_name}" "${capability_type}" "${common_packs}" "${tool_packs}" "${enhanced_packs}" "${enhanced_enabled}" "${experimental_packs}" "${experimental_enabled}" "${explicit_specs}")"
+    resolved_specs="$(resolve_capability_items_csv "${tool_name}" "${capability_type}" "${common_packs}" "${tool_packs}" "${enhanced_packs}" "${enhanced_enabled}" "${experimental_packs}" "${experimental_enabled}" "${explicit_specs}" "${exclude_specs}")"
     if [[ -n "${explicit_specs}" ]]; then
       mode="resolved+explicit"
     else
@@ -696,6 +810,7 @@ write_capability_manifest() {
     printf 'experimental_packs=%s\n' "${experimental_packs:-<空>}"
     printf 'experimental_enabled=%s\n' "${experimental_enabled}"
     printf 'explicit_specs=%s\n' "${explicit_specs:-<空>}"
+    printf 'exclude_specs=%s\n' "${exclude_specs:-<空>}"
     printf 'item_count=%s\n' "${item_count}"
     printf 'items:\n'
     if [[ -n "${resolved_specs}" ]]; then
@@ -1100,6 +1215,254 @@ EOF
 - 明确上线后建议观察点
 EOF
   fi
+}
+
+render_shared_global_governance_templates_if_missing() {
+  local agents_dir="$1"
+  local governance_path="${agents_dir}/global-governance.md"
+  local standards_path="${agents_dir}/engineering-standards.md"
+  local delivery_path="${agents_dir}/delivery-checklist.md"
+  local memory_rules_path="${agents_dir}/memory-rules.md"
+
+  mkdir -p "${agents_dir}"
+
+  if [[ ! -f "${governance_path}" ]]; then
+    cat > "${governance_path}" <<'EOF'
+# 全局治理约定
+
+## 目标
+- 让全局默认行为长期稳定、可维护、可复用
+- 先守住安全、正确性、稳定性，再追求速度
+- 不把项目私有决策塞进全局治理文件
+
+## 适用范围
+- 适用于当前工具的所有全局会话
+- 只放长期有效的工程规则、协作方式和交付门槛
+- 项目特有目标、业务上下文、临时发布安排，回写到项目目录
+
+## 默认工作方式
+- 先确认目标、边界、影响范围和回滚方式
+- 先做最小可验证变更，再补测试、文档和配置同步
+- 先查已有实现和现有规范，不重复造轮子
+- 涉及权限、密钥、迁移、发布的改动必须明确说明
+
+## 全局边界
+- 不改无关代码
+- 不默认放宽高风险权限
+- 不把临时排查命令当作长期基线
+- 不覆盖用户已有的项目级约束
+
+## 交付要求
+- 结论优先
+- 明确验证方式和结果
+- 明确剩余风险和未执行项
+- 涉及配置、发布、迁移时明确回滚路径
+EOF
+  fi
+
+  if [[ ! -f "${standards_path}" ]]; then
+    cat > "${standards_path}" <<'EOF'
+# 工程规范
+
+## 变更原则
+- 优先最小变更
+- 先兼容再替换
+- 配置、代码、文档保持一致
+- 高风险变更前先明确影响面
+
+## 代码要求
+- 先理解现有实现，再修改
+- 公共能力优先复用现有模块
+- 命名、目录、配置项保持见名知意
+- 非必要不引入新依赖、新进程、新中间层
+
+## 安全与稳定性
+- 默认最小权限
+- 敏感信息只做状态展示，不在报告中明文输出
+- 涉及网络、文件、执行权限时，优先保持可审计
+- 涉及超时、重试、限流、幂等时明确默认策略
+
+## 性能与维护
+- 优先保关键路径稳定
+- 避免把一次性脚本写成长期复杂框架
+- 能用工具官方能力解决，就不要再包一层抽象
+- 新增能力要能被检查、回放和恢复
+EOF
+  fi
+
+  if [[ ! -f "${delivery_path}" ]]; then
+    cat > "${delivery_path}" <<'EOF'
+# 交付检查单
+
+## 变更前
+- 目标和边界是否清楚
+- 影响范围是否识别
+- 依赖和前置条件是否确认
+- 回滚方式是否明确
+
+## 变更中
+- 是否保持最小变更
+- 是否同步更新配置、模板、文档
+- 是否记录人工步骤和例外情况
+- 是否避免影响无关能力
+
+## 变更后
+- 是否完成最小必需验证
+- 是否说明未执行验证及原因
+- 是否说明剩余风险和观察点
+- 是否确认当前状态与目标状态一致
+EOF
+  fi
+
+  if [[ ! -f "${memory_rules_path}" ]]; then
+    cat > "${memory_rules_path}" <<'EOF'
+# 记忆回写规则
+
+## 该写什么
+- 长期有效的工程约束
+- 反复出现的已知坑点
+- 稳定可复用的命令、流程和检查单
+- 明确生效范围的架构决策
+
+## 不写什么
+- 临时调试输出
+- 一次性业务数据
+- 只对单个项目有效的上下文
+- 未确认的猜测结论
+
+## 回写时机
+- 新约束确认后
+- 关键失败原因定位后
+- 发布或恢复流程调整后
+- 默认能力包、权限边界、协作方式变化后
+
+## 回写要求
+- 写清楚结论、适用范围、触发条件
+- 尽量短，避免堆流水账
+- 与项目私有记忆分开维护
+EOF
+  fi
+}
+
+render_shared_global_role_templates_if_missing() {
+  local agents_dir="$1"
+  local planner_path="${agents_dir}/planner.md"
+  local implementer_path="${agents_dir}/implementer.md"
+  local reviewer_path="${agents_dir}/reviewer.md"
+  local tester_path="${agents_dir}/tester.md"
+
+  mkdir -p "${agents_dir}"
+
+  if [[ ! -f "${planner_path}" ]]; then
+    cat > "${planner_path}" <<'EOF'
+# Planner
+
+## 必读
+- `global-governance.md`
+- `engineering-standards.md`
+- `delivery-checklist.md`
+
+## 目标
+- 先明确目标、边界、风险和回滚方式
+- 把任务拆成可验证的小步骤
+- 先确认全局约束，再进入实现
+EOF
+  fi
+
+  if [[ ! -f "${implementer_path}" ]]; then
+    cat > "${implementer_path}" <<'EOF'
+# Implementer
+
+## 必读
+- `global-governance.md`
+- `engineering-standards.md`
+- `delivery-checklist.md`
+- `memory-rules.md`
+
+## 执行要求
+- 优先最小变更
+- 不改无关代码
+- 配置、模板、文档、验证同步完成
+- 新增长期规则时及时回写全局记忆
+EOF
+  fi
+
+  if [[ ! -f "${reviewer_path}" ]]; then
+    cat > "${reviewer_path}" <<'EOF'
+# Reviewer
+
+## 必读
+- `global-governance.md`
+- `engineering-standards.md`
+- `delivery-checklist.md`
+
+## 评审重点
+- 正确性
+- 安全
+- 性能
+- 稳定性
+- 配置一致性
+- 可回滚性
+EOF
+  fi
+
+  if [[ ! -f "${tester_path}" ]]; then
+    cat > "${tester_path}" <<'EOF'
+# Tester
+
+## 必读
+- `engineering-standards.md`
+- `delivery-checklist.md`
+- `memory-rules.md`
+
+## 验证要求
+- 先最小必需验证，再补关键路径
+- 明确已执行、未执行和建议补充项
+- 关键失败原因和回归方式要可回写、可复用
+EOF
+  fi
+}
+
+managed_global_governance_state() {
+  local agents_dir="$1"
+  local total="4"
+  local present="0"
+  local file_path=""
+
+  for file_path in \
+    "${agents_dir}/global-governance.md" \
+    "${agents_dir}/engineering-standards.md" \
+    "${agents_dir}/delivery-checklist.md" \
+    "${agents_dir}/memory-rules.md"; do
+    [[ -f "${file_path}" ]] && present=$((present + 1))
+  done
+
+  printf '%s/%s' "${present}" "${total}"
+}
+
+managed_global_governance_ready() {
+  [[ "$(managed_global_governance_state "${1}")" == "4/4" ]]
+}
+
+managed_global_role_state() {
+  local agents_dir="$1"
+  local total="4"
+  local present="0"
+  local file_path=""
+
+  for file_path in \
+    "${agents_dir}/planner.md" \
+    "${agents_dir}/implementer.md" \
+    "${agents_dir}/reviewer.md" \
+    "${agents_dir}/tester.md"; do
+    [[ -f "${file_path}" ]] && present=$((present + 1))
+  done
+
+  printf '%s/%s' "${present}" "${total}"
+}
+
+managed_global_role_ready() {
+  [[ "$(managed_global_role_state "${1}")" == "4/4" ]]
 }
 
 show_placeholder_result() {

@@ -114,18 +114,20 @@ json_escape() {
 
 json_array_from_csv() {
   local input="${1:-}"
-  local first=1
   local item=""
+  local i=0
+  local -a items=()
 
+  mapfile -t items < <(csv_clean_lines "${input}")
   printf '['
-  while IFS= read -r item; do
+  for i in "${!items[@]}"; do
+    item="${items[$i]}"
     [[ -n "${item}" ]] || continue
-    if [[ "${first}" -eq 0 ]]; then
+    if (( i > 0 )); then
       printf ', '
     fi
     printf '"%s"' "$(json_escape "${item}")"
-    first=0
-  done < <(csv_clean_lines "${input}")
+  done
   printf ']'
 }
 
@@ -256,6 +258,9 @@ normalize_config() {
   OPENCODE_PACKAGE="${OPENCODE_PACKAGE:-opencode-ai@latest}"
   DEFAULT_MODEL="${DEFAULT_MODEL:-anthropic/claude-sonnet-4-6}"
   PROVIDER_DEFAULT="${PROVIDER_DEFAULT:-anthropic}"
+  PROVIDER_ENV_KEY="${PROVIDER_ENV_KEY:-}"
+  PROVIDER_API_VALUE="${PROVIDER_API_VALUE:-}"
+  API_BASE_URL="${API_BASE_URL:-}"
   OPENAI_API_KEY="${OPENAI_API_KEY:-}"
   ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
   GOOGLE_GENERATIVEAI_API_KEY="${GOOGLE_GENERATIVEAI_API_KEY:-}"
@@ -273,10 +278,15 @@ normalize_config() {
   EXPERIMENTAL_PACKS="${EXPERIMENTAL_PACKS:-experimental-bleeding-edge}"
   ENABLE_EXPERIMENTAL_PACKS="${ENABLE_EXPERIMENTAL_PACKS:-0}"
   SKILL_SPECS="${SKILL_SPECS:-}"
+  SKILL_EXCLUDES="${SKILL_EXCLUDES:-}"
   PLUGIN_SPECS="${PLUGIN_SPECS:-}"
+  PLUGIN_EXCLUDES="${PLUGIN_EXCLUDES:-}"
   HOOK_SPECS="${HOOK_SPECS:-}"
+  HOOK_EXCLUDES="${HOOK_EXCLUDES:-}"
   MCP_SPECS="${MCP_SPECS:-}"
+  MCP_EXCLUDES="${MCP_EXCLUDES:-}"
   AGENT_SPECS="${AGENT_SPECS:-}"
+  AGENT_EXCLUDES="${AGENT_EXCLUDES:-}"
   normalize_mode_profile
   GLOBAL_OPENCODE_DIR="${GLOBAL_OPENCODE_DIR:-/root/.config/opencode}"
   GLOBAL_CONFIG_PATH="${GLOBAL_CONFIG_PATH:-${GLOBAL_OPENCODE_DIR}/opencode.json}"
@@ -308,15 +318,89 @@ normalize_config() {
   TOOL_AGENTS_MANIFEST_PATH="${TOOL_MANIFESTS_DIR}/agents.manifest"
 }
 
+opencode_provider_env_key() {
+  if [[ -n "${PROVIDER_ENV_KEY:-}" ]]; then
+    printf '%s' "${PROVIDER_ENV_KEY}"
+    return 0
+  fi
+
+  case "${PROVIDER_DEFAULT:-}" in
+    anthropic)
+      printf 'ANTHROPIC_API_KEY'
+      ;;
+    openai)
+      printf 'OPENAI_API_KEY'
+      ;;
+    google)
+      printf 'GOOGLE_GENERATIVEAI_API_KEY'
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+opencode_provider_api_value() {
+  if [[ -n "${PROVIDER_API_VALUE:-}" ]]; then
+    printf '%s' "${PROVIDER_API_VALUE}"
+    return 0
+  fi
+
+  case "${PROVIDER_DEFAULT:-}" in
+    anthropic)
+      printf '%s' "${ANTHROPIC_API_KEY:-}"
+      ;;
+    openai)
+      printf '%s' "${OPENAI_API_KEY:-}"
+      ;;
+    google)
+      printf '%s' "${GOOGLE_GENERATIVEAI_API_KEY:-}"
+      ;;
+    *)
+      printf ''
+      ;;
+  esac
+}
+
+opencode_provider_env_configured() {
+  local env_key=""
+  local api_value=""
+
+  env_key="$(opencode_provider_env_key)"
+  api_value="$(opencode_provider_api_value)"
+
+  if [[ -n "${api_value}" ]]; then
+    return 0
+  fi
+  if [[ -n "${env_key}" ]] && printenv "${env_key}" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -n "${env_key}" && -f "${TOOL_ENV_PATH}" ]] && grep -q "^export ${env_key}=" "${TOOL_ENV_PATH}" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+opencode_model_name_for_provider() {
+  local raw_model="${1:-}"
+  local provider_name="${2:-}"
+
+  if [[ "${raw_model}" == "${provider_name}/"* ]]; then
+    printf '%s' "${raw_model#${provider_name}/}"
+  else
+    printf '%s' "${raw_model}"
+  fi
+}
+
 refresh_plugin_plan() {
   local spec=""
   local resolved_path=""
   local -a plugin_specs=()
 
   if [[ "${ENABLE_DEFAULT_PLUGINS}" == "1" ]]; then
-    RESOLVED_PLUGIN_SPECS="$(resolve_installable_capability_items_csv "opencode" "plugin" "config-plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}")"
+    RESOLVED_PLUGIN_SPECS="$(resolve_installable_capability_items_csv "opencode" "plugin" "config-plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
   else
-    RESOLVED_PLUGIN_SPECS="${PLUGIN_SPECS}"
+    RESOLVED_PLUGIN_SPECS="$(csv_subtract "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
   fi
   RESOLVED_PACKAGE_PLUGIN_SPECS=""
   RESOLVED_LOCAL_PLUGIN_SPECS=""
@@ -340,6 +424,33 @@ refresh_plugin_plan() {
     fi
     RESOLVED_PACKAGE_PLUGIN_SPECS="$(csv_merge_unique "${RESOLVED_PACKAGE_PLUGIN_SPECS}" "${spec}")"
   done
+}
+
+resolved_package_plugin_specs_csv() {
+  local resolved_plugin_specs=""
+  local package_specs=""
+  local spec=""
+  local -a plugin_specs=()
+
+  if [[ "${ENABLE_DEFAULT_PLUGINS}" == "1" ]]; then
+    resolved_plugin_specs="$(resolve_installable_capability_items_csv "opencode" "plugin" "config-plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
+  else
+    resolved_plugin_specs="$(csv_subtract "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
+  fi
+
+  mapfile -t plugin_specs < <(csv_clean_lines "${resolved_plugin_specs}")
+  for spec in "${plugin_specs[@]}"; do
+    [[ -n "${spec}" ]] || continue
+    if [[ "${spec}" == github:* ]]; then
+      continue
+    fi
+    if url_like_spec "${spec}" || path_like_spec "${spec}"; then
+      continue
+    fi
+    package_specs="$(csv_merge_unique "${package_specs}" "${spec}")"
+  done
+
+  printf '%s' "${package_specs}"
 }
 
 require_config() {
@@ -419,39 +530,79 @@ opencode_version_value() {
 }
 
 render_global_config() {
+  local provider_env_key=""
+  local provider_model_name=""
+  local package_plugin_specs=""
+
+  provider_env_key="$(opencode_provider_env_key)"
+  provider_model_name="$(opencode_model_name_for_provider "${DEFAULT_MODEL}" "${PROVIDER_DEFAULT}")"
+  package_plugin_specs="$(resolved_package_plugin_specs_csv)"
+
   cat > "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
 {
   "\$schema": "https://opencode.ai/config.json",
   "model": "$(json_escape "${DEFAULT_MODEL}")",
   "instructions": [
     "${GLOBAL_AGENTS_PATH}"
-  ]$(if [[ -n "${RESOLVED_PACKAGE_PLUGIN_SPECS}" ]]; then printf ',\n  "plugin": %s' "$(json_array_from_csv "${RESOLVED_PACKAGE_PLUGIN_SPECS}")"; fi),
+  ]$(if [[ -n "${package_plugin_specs}" ]]; then printf ',\n  "plugin": %s' "$(json_array_from_csv "${package_plugin_specs}")"; fi),
   "provider": {
-    "$(json_escape "${PROVIDER_DEFAULT}")": {
-      "options": {
 EOF
 
   case "${PROVIDER_DEFAULT}" in
     anthropic)
-      printf '        "apiKey": "{env:ANTHROPIC_API_KEY}"\n' >> "${TOOL_GLOBAL_CONFIG_PATH}"
+      cat >> "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
+    "$(json_escape "${PROVIDER_DEFAULT}")": {
+      "options": {
+        "apiKey": "{env:$(json_escape "${provider_env_key}")}"$(if [[ -n "${API_BASE_URL}" ]]; then printf ',\n        "baseURL": "%s"' "$(json_escape "${API_BASE_URL}")"; fi)
+      }
+    }
+EOF
       ;;
     openai)
-      printf '        "apiKey": "{env:OPENAI_API_KEY}"\n' >> "${TOOL_GLOBAL_CONFIG_PATH}"
+      cat >> "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
+    "$(json_escape "${PROVIDER_DEFAULT}")": {
+      "options": {
+        "apiKey": "{env:$(json_escape "${provider_env_key}")}"$(if [[ -n "${API_BASE_URL}" ]]; then printf ',\n        "baseURL": "%s"' "$(json_escape "${API_BASE_URL}")"; fi)
+      }
+    }
+EOF
       ;;
     google)
-      printf '        "apiKey": "{env:GOOGLE_GENERATIVEAI_API_KEY}"\n' >> "${TOOL_GLOBAL_CONFIG_PATH}"
+      cat >> "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
+    "$(json_escape "${PROVIDER_DEFAULT}")": {
+      "options": {
+        "apiKey": "{env:$(json_escape "${provider_env_key}")}"$(if [[ -n "${API_BASE_URL}" ]]; then printf ',\n        "baseURL": "%s"' "$(json_escape "${API_BASE_URL}")"; fi)
+      }
+    }
+EOF
       ;;
     ollama)
-      printf '        "baseUrl": "%s"\n' "$(json_escape "${OLLAMA_BASE_URL}")" >> "${TOOL_GLOBAL_CONFIG_PATH}"
+      cat >> "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
+    "$(json_escape "${PROVIDER_DEFAULT}")": {
+      "options": {
+        "baseURL": "$(json_escape "${OLLAMA_BASE_URL}")"
+      }
+    }
+EOF
       ;;
     *)
-      printf '        "apiKey": ""\n' >> "${TOOL_GLOBAL_CONFIG_PATH}"
+      cat >> "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
+    "$(json_escape "${PROVIDER_DEFAULT}")": {
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "$(json_escape "${provider_model_name}")": {
+          "name": "$(json_escape "${provider_model_name}")"
+        }
+      },
+      "options": {
+        "apiKey": "{env:$(json_escape "${provider_env_key}")}"$(if [[ -n "${API_BASE_URL}" ]]; then printf ',\n        "baseURL": "%s"' "$(json_escape "${API_BASE_URL}")"; fi)
+      }
+    }
+EOF
       ;;
   esac
 
   cat >> "${TOOL_GLOBAL_CONFIG_PATH}" <<EOF
-      }
-    }
   }
 }
 EOF
@@ -460,6 +611,30 @@ EOF
 opencode_plugin_cache_path() {
   local package_name="${1:-}"
   printf '%s/%s' "${GLOBAL_PLUGIN_CACHE_DIR}" "${package_name}"
+}
+
+opencode_installed_package_plugin_path() {
+  local package_name="${1:-}"
+  local default_path=""
+  local packages_root=""
+  local nested_path=""
+
+  default_path="$(opencode_plugin_cache_path "${package_name}")"
+  if [[ -d "${default_path}" ]]; then
+    printf '%s' "${default_path}"
+    return 0
+  fi
+
+  packages_root="$(dirname "${GLOBAL_PLUGIN_CACHE_DIR}")/packages"
+  if [[ -d "${packages_root}" ]]; then
+    nested_path="$(find "${packages_root}" -maxdepth 4 -type d -path "*/node_modules/${package_name}" -print -quit 2>/dev/null || true)"
+    if [[ -n "${nested_path}" ]]; then
+      printf '%s' "${nested_path}"
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 sync_local_plugins() {
@@ -490,11 +665,31 @@ sync_local_plugins() {
   done
 }
 
+sync_package_plugins() {
+  local package_name=""
+  local -a package_plugins=()
+
+  mapfile -t package_plugins < <(csv_clean_lines "${RESOLVED_PACKAGE_PLUGIN_SPECS}")
+  [[ "${#package_plugins[@]}" -gt 0 ]] || return 0
+
+  for package_name in "${package_plugins[@]}"; do
+    [[ -n "${package_name}" ]] || continue
+    if npm install --prefix "$(dirname "${GLOBAL_PLUGIN_CACHE_DIR}")" "${package_name}" >/dev/null 2>&1; then
+      log_info "已安装 plugin：${package_name}"
+    elif command -v opencode >/dev/null 2>&1 && opencode plugin "${package_name}" --global --force >/dev/null 2>&1; then
+      log_info "已通过官方命令兜底安装 plugin：${package_name}"
+    else
+      log_warn "plugin 安装失败，已跳过：${package_name}"
+    fi
+  done
+}
+
 write_plugin_status_snapshot() {
   local package_name=""
   local source_path=""
   local target_path=""
   local cache_path=""
+  local installed_path=""
   local target_state=""
   local configured="no"
   local -a package_plugins=()
@@ -512,16 +707,19 @@ write_plugin_status_snapshot() {
   for package_name in "${package_plugins[@]}"; do
     [[ -n "${package_name}" ]] || continue
     cache_path="$(opencode_plugin_cache_path "${package_name}")"
+    installed_path="$(opencode_installed_package_plugin_path "${package_name}" || true)"
     configured="no"
 
     if [[ -f "${GLOBAL_CONFIG_PATH}" ]] && grep -F "\"${package_name}\"" "${GLOBAL_CONFIG_PATH}" >/dev/null 2>&1; then
       configured="yes"
     fi
 
-    if [[ "${configured}" == "yes" && -d "${cache_path}" ]]; then
-      printf '%s|已安装|%s|%s\n' "${package_name}" "${package_name}" "${cache_path}" >> "${TOOL_PLUGIN_STATUS_PATH}"
+    if [[ "${configured}" == "yes" && -n "${installed_path}" ]]; then
+      printf '%s|已安装|%s|%s\n' "${package_name}" "${package_name}" "${installed_path}" >> "${TOOL_PLUGIN_STATUS_PATH}"
     elif [[ "${configured}" == "yes" ]]; then
-      printf '%s|已配置|%s|等待 OpenCode 首次启动后自动下载\n' "${package_name}" "${package_name}" >> "${TOOL_PLUGIN_STATUS_PATH}"
+      printf '%s|已配置|%s|已写入 opencode.json，但插件缓存目录尚未落地\n' "${package_name}" "${package_name}" >> "${TOOL_PLUGIN_STATUS_PATH}"
+    elif [[ -n "${installed_path}" ]]; then
+      printf '%s|已配置|%s|插件包已安装到 %s，但尚未写入 opencode.json\n' "${package_name}" "${package_name}" "${installed_path}" >> "${TOOL_PLUGIN_STATUS_PATH}"
     else
       printf '%s|缺失|%s|未写入 opencode.json\n' "${package_name}" "${package_name}" >> "${TOOL_PLUGIN_STATUS_PATH}"
     fi
@@ -573,24 +771,44 @@ plugin_status_summary() {
     "$(plugin_status_count "需人工处理")"
 }
 
+plugin_status_names_csv() {
+  local target_status="${1:-}"
+
+  [[ -f "${TOOL_PLUGIN_STATUS_PATH}" ]] || return 0
+
+  awk -F'|' -v target="${target_status}" '
+    NR > 2 && $2 == target {
+      names[count++] = $1
+    }
+    END {
+      for (i = 0; i < count; i++) {
+        if (i > 0) {
+          printf ", "
+        }
+        printf "%s", names[i]
+      }
+    }
+  ' "${TOOL_PLUGIN_STATUS_PATH}"
+}
+
 opencode_auth_state() {
   case "${PROVIDER_DEFAULT}" in
     anthropic)
-      if [[ -n "${ANTHROPIC_API_KEY}" ]] || printenv ANTHROPIC_API_KEY >/dev/null 2>&1 || [[ -f "${TOOL_ENV_PATH}" && "$(grep -c '^export ANTHROPIC_API_KEY=' "${TOOL_ENV_PATH}" 2>/dev/null)" != "0" ]]; then
+      if opencode_provider_env_configured; then
         printf '已配置'
       else
         printf '未配置'
       fi
       ;;
     openai)
-      if [[ -n "${OPENAI_API_KEY}" ]] || printenv OPENAI_API_KEY >/dev/null 2>&1 || [[ -f "${TOOL_ENV_PATH}" && "$(grep -c '^export OPENAI_API_KEY=' "${TOOL_ENV_PATH}" 2>/dev/null)" != "0" ]]; then
+      if opencode_provider_env_configured; then
         printf '已配置'
       else
         printf '未配置'
       fi
       ;;
     google)
-      if [[ -n "${GOOGLE_GENERATIVEAI_API_KEY}" ]] || printenv GOOGLE_GENERATIVEAI_API_KEY >/dev/null 2>&1 || [[ -f "${TOOL_ENV_PATH}" && "$(grep -c '^export GOOGLE_GENERATIVEAI_API_KEY=' "${TOOL_ENV_PATH}" 2>/dev/null)" != "0" ]]; then
+      if opencode_provider_env_configured; then
         printf '已配置'
       else
         printf '未配置'
@@ -600,7 +818,11 @@ opencode_auth_state() {
       printf '本地 provider'
       ;;
     *)
-      printf '未检测到'
+      if opencode_provider_env_configured; then
+        printf '已配置'
+      else
+        printf '未配置'
+      fi
       ;;
   esac
 }
@@ -673,11 +895,11 @@ EOF
 
 render_runtime_manifests() {
   write_pack_manifest "${TOOL_PACKS_MANIFEST_PATH}" "opencode" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "OpenCode skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.agents/skills 目录结构" "opencode" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "OpenCode plugin 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "默认仅初始化 ~/.config/opencode/plugins 目录结构" "opencode" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "OpenCode hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认保留为空，按团队约定再补" "opencode" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "OpenCode MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "opencode" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "OpenCode agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.config/opencode/agents 目录结构" "opencode" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
+  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "OpenCode skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.agents/skills 目录结构" "opencode" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${SKILL_EXCLUDES}"
+  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "OpenCode plugin 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "默认仅初始化 ~/.config/opencode/plugins 目录结构" "opencode" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_EXCLUDES}"
+  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "OpenCode hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认保留为空，按团队约定再补" "opencode" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${HOOK_EXCLUDES}"
+  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "OpenCode MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "opencode" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${MCP_EXCLUDES}"
+  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "OpenCode agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.config/opencode/agents 目录结构" "opencode" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${AGENT_EXCLUDES}"
 }
 
 render_support_notes_if_missing() {
@@ -710,10 +932,19 @@ EOF
 }
 
 render_runtime_env_file() {
+  local provider_env_key=""
+  local provider_api_value=""
+
   : > "${TOOL_ENV_PATH}"
+  provider_env_key="$(opencode_provider_env_key)"
+  provider_api_value="$(opencode_provider_api_value)"
+
   [[ -n "${OPENAI_API_KEY}" ]] && printf 'export OPENAI_API_KEY=%q\n' "${OPENAI_API_KEY}" >> "${TOOL_ENV_PATH}"
   [[ -n "${ANTHROPIC_API_KEY}" ]] && printf 'export ANTHROPIC_API_KEY=%q\n' "${ANTHROPIC_API_KEY}" >> "${TOOL_ENV_PATH}"
   [[ -n "${GOOGLE_GENERATIVEAI_API_KEY}" ]] && printf 'export GOOGLE_GENERATIVEAI_API_KEY=%q\n' "${GOOGLE_GENERATIVEAI_API_KEY}" >> "${TOOL_ENV_PATH}"
+  if [[ -n "${provider_env_key}" && -n "${provider_api_value}" ]]; then
+    printf 'export %s=%q\n' "${provider_env_key}" "${provider_api_value}" >> "${TOOL_ENV_PATH}"
+  fi
   return 0
 }
 
@@ -831,6 +1062,8 @@ sync_global_config() {
   render_wrapper_script
   render_runtime_manifests
   render_support_notes_if_missing
+  render_shared_global_governance_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+  render_shared_global_role_templates_if_missing "${GLOBAL_AGENTS_DIR}"
   sync_local_plugins
 
   backup_path_if_exists "${GLOBAL_CONFIG_PATH}" "OpenCode opencode.json"
@@ -846,6 +1079,11 @@ sync_global_config() {
 
   if [[ -s "${TOOL_ENV_PATH}" ]]; then
     log_info "已生成工具目录 provider 环境文件：${TOOL_ENV_PATH}"
+  fi
+  sync_package_plugins
+  if [[ -n "${RESOLVED_PACKAGE_PLUGIN_SPECS}" ]]; then
+    install -m 600 "${TOOL_GLOBAL_CONFIG_PATH}" "${GLOBAL_CONFIG_PATH}"
+    log_info "已回写最终 opencode.json：${GLOBAL_CONFIG_PATH}"
   fi
   write_plugin_status_snapshot
   log_info "已生成工具目录包装命令：${TOOL_WRAPPER_PATH}"
@@ -924,14 +1162,22 @@ cmd_service_check() {
   local auth_state="未检测到"
   local plugin_configured_count="0"
   local plugin_missing_count="0"
+  local plugin_manual_count="0"
   local plugin_summary="未检测到"
+  local plugin_configured_names=""
+  local plugin_missing_names=""
+  local plugin_manual_names=""
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / plugin 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
+  local provider_env_key=""
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_PLUGIN_STATUS_PATH
   render_runtime_manifests
+  provider_env_key="$(opencode_provider_env_key)"
   opencode_path="$(opencode_binary_path)"
   write_plugin_status_snapshot
 
@@ -950,6 +1196,8 @@ cmd_service_check() {
   [[ -d "${GLOBAL_AGENTS_DIR}" ]] && agents_dir_exists="yes"
   [[ -d "${GLOBAL_SKILLS_DIR}" ]] && skills_exists="yes"
   [[ -d "${GLOBAL_PLUGINS_DIR}" ]] && plugins_exists="yes"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_AGENTS_DIR}")"
 
   if [[ -f "${GLOBAL_CONFIG_PATH}" ]]; then
     current_model="$(extract_json_string_value "model" "${GLOBAL_CONFIG_PATH}")"
@@ -965,13 +1213,24 @@ cmd_service_check() {
   print_report_line "当前模型" "${current_model}"
   print_report_line "当前 provider" "${current_provider}"
   print_report_line "当前鉴权" "${auth_state}"
+  print_report_line "目标 Env Key" "${provider_env_key:-未声明}"
+  print_report_line "目标 Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
   runtime_state="$(opencode_runtime_state "${opencode_path}" "${config_exists}" "${auth_state}")"
   plugin_configured_count="$(plugin_status_count "已配置")"
   plugin_missing_count="$(plugin_status_count "缺失")"
+  plugin_manual_count="$(plugin_status_count "需人工处理")"
   plugin_summary="$(plugin_status_summary)"
+  plugin_configured_names="$(plugin_status_names_csv "已配置")"
+  plugin_missing_names="$(plugin_status_names_csv "缺失")"
+  plugin_manual_names="$(plugin_status_names_csv "需人工处理")"
   readiness_summary="$(opencode_best_practice_readiness "${opencode_path}" "${config_exists}" "${auth_state}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "plugin")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / plugin $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" || "${readiness_summary}" == "等待首次启动拉取依赖" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${runtime_state}" in
@@ -989,12 +1248,15 @@ cmd_service_check() {
   if [[ -n "${CONFIG_FILE}" ]]; then
     [[ "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "模型与目标不一致")"
     [[ "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")" == "缺失" && "${runtime_state}" != "未安装" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "当前模型未配置")"
-    [[ "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标不一致")"
+    [[ "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标配置不一致")"
     [[ "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")" == "缺失" && "${runtime_state}" != "未安装" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "当前 provider 未配置")"
   fi
 
   [[ "${plugin_configured_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "插件已写入配置但尚未生效 ${plugin_configured_count} 项")"
   [[ "${plugin_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 plugin 缺失 ${plugin_missing_count} 项")"
+  [[ "${plugin_manual_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "存在需人工处理的 plugin ${plugin_manual_count} 项")"
+  ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_report_line "当前状态" "${runtime_state}"
   print_report_line "建议动作" "$(recommended_service_action "opencode" "${runtime_state}" "${CONFIG_FILE:-}")"
@@ -1003,6 +1265,11 @@ cmd_service_check() {
   print_report_line "技能目录" "${GLOBAL_SKILLS_DIR} (${skills_exists})"
   print_report_line "插件目录" "${GLOBAL_PLUGINS_DIR} (${plugins_exists})"
   print_report_line "插件状态" "${plugin_summary}"
+  [[ -n "${plugin_configured_names}" ]] && print_report_line "待生效 plugin" "${plugin_configured_names}"
+  [[ -n "${plugin_missing_names}" ]] && print_report_line "缺失 plugin" "${plugin_missing_names}"
+  [[ -n "${plugin_manual_names}" ]] && print_report_line "人工处理 plugin" "${plugin_manual_names}"
+  print_report_line "全局治理模板" "${GLOBAL_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_AGENTS_DIR} (${global_role_state})"
   print_report_line "工具 env" "${TOOL_ENV_PATH}"
   print_report_line "工具包装命令" "${TOOL_WRAPPER_PATH}"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
@@ -1022,6 +1289,8 @@ cmd_service_check() {
     print_report_line "目标配置文件" "${CONFIG_FILE}"
     print_report_line "目标模型" "${DEFAULT_MODEL}"
     print_report_line "目标 provider" "${PROVIDER_DEFAULT}"
+    print_report_line "目标 Env Key" "${provider_env_key:-未声明}"
+    print_report_line "目标 Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
     print_report_line "模型比对" "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")"
     print_report_line "Provider 比对" "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")"
   fi
@@ -1037,10 +1306,16 @@ cmd_service_report() {
   local auth_state="未检测到"
   local plugin_configured_count="0"
   local plugin_missing_count="0"
+  local plugin_manual_count="0"
   local plugin_summary="未检测到"
+  local plugin_configured_names=""
+  local plugin_missing_names=""
+  local plugin_manual_names=""
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / plugin 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_PLUGIN_STATUS_PATH
@@ -1060,14 +1335,25 @@ cmd_service_report() {
     [[ -n "${current_provider}" ]] || current_provider="未检测到"
   fi
   auth_state="$(opencode_auth_state)"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_AGENTS_DIR}")"
 
   install_state="$(opencode_runtime_state "${opencode_path}" "$([[ "${config_state}" == "present" ]] && printf yes || printf no)" "${auth_state}")"
   plugin_configured_count="$(plugin_status_count "已配置")"
   plugin_missing_count="$(plugin_status_count "缺失")"
+  plugin_manual_count="$(plugin_status_count "需人工处理")"
   plugin_summary="$(plugin_status_summary)"
+  plugin_configured_names="$(plugin_status_names_csv "已配置")"
+  plugin_missing_names="$(plugin_status_names_csv "缺失")"
+  plugin_manual_names="$(plugin_status_names_csv "需人工处理")"
   readiness_summary="$(opencode_best_practice_readiness "${opencode_path}" "$([[ "${config_state}" == "present" ]] && printf yes || printf no)" "${auth_state}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "plugin")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / plugin $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" || "${readiness_summary}" == "等待首次启动拉取依赖" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${install_state}" in
@@ -1085,12 +1371,15 @@ cmd_service_report() {
   if [[ -n "${CONFIG_FILE}" ]]; then
     [[ "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "模型与目标不一致")"
     [[ "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")" == "缺失" && "${install_state}" != "未安装" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "当前模型未配置")"
-    [[ "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标不一致")"
+    [[ "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标配置不一致")"
     [[ "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")" == "缺失" && "${install_state}" != "未安装" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "当前 provider 未配置")"
   fi
 
   [[ "${plugin_configured_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "插件已写入配置但尚未生效 ${plugin_configured_count} 项")"
   [[ "${plugin_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 plugin 缺失 ${plugin_missing_count} 项")"
+  [[ "${plugin_manual_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "存在需人工处理的 plugin ${plugin_manual_count} 项")"
+  ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_section "OpenCode 概览"
   print_report_line "安装状态" "${install_state}"
@@ -1100,11 +1389,18 @@ cmd_service_report() {
   print_report_line "当前模型" "${current_model}"
   print_report_line "当前 provider" "${current_provider}"
   print_report_line "当前鉴权" "${auth_state}"
+  print_report_line "目标 Env Key" "$(opencode_provider_env_key || true)"
+  print_report_line "目标 Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
+  print_report_line "全局治理模板" "${GLOBAL_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_AGENTS_DIR} (${global_role_state})"
   print_report_line "opencode.json" "${GLOBAL_CONFIG_PATH} (${config_state})"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
   print_report_line "最佳实践就绪度" "${readiness_summary}"
   print_report_line "能力包策略" "$(pack_strategy_summary "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}")"
   print_report_line "插件状态" "${plugin_summary}"
+  [[ -n "${plugin_configured_names}" ]] && print_report_line "待生效 plugin" "${plugin_configured_names}"
+  [[ -n "${plugin_missing_names}" ]] && print_report_line "缺失 plugin" "${plugin_missing_names}"
+  [[ -n "${plugin_manual_names}" ]] && print_report_line "人工处理 plugin" "${plugin_manual_names}"
   print_report_line "核心能力统计" "${capability_stats}"
   print_report_line "能力项统计" "${capability_counts}"
   print_report_line "能力包清单" "${TOOL_PACKS_MANIFEST_PATH} ($(path_state "${TOOL_PACKS_MANIFEST_PATH}"))"
@@ -1114,6 +1410,8 @@ cmd_service_report() {
   if [[ -n "${CONFIG_FILE}" ]]; then
     print_report_line "目标模型" "${DEFAULT_MODEL}"
     print_report_line "目标 provider" "${PROVIDER_DEFAULT}"
+    print_report_line "目标 Env Key" "$(opencode_provider_env_key || true)"
+    print_report_line "目标 Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
     print_report_line "模型比对" "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")"
     print_report_line "Provider 比对" "$(setting_compare_state "${current_provider}" "${PROVIDER_DEFAULT}")"
   fi
@@ -1132,7 +1430,10 @@ cmd_config_show() {
       print_report_line "安装方式" "${INSTALL_METHOD}"
       print_report_line "模型" "${DEFAULT_MODEL}"
       print_report_line "默认 provider" "${PROVIDER_DEFAULT}"
-      print_report_line "Ollama Base URL" "${OLLAMA_BASE_URL}"
+      print_report_line "Provider Env Key" "$(opencode_provider_env_key || true)"
+      print_report_line "Provider API Value" "$(sensitive_presence_display_value "$(opencode_provider_api_value || true)" "未声明" "已声明（已脱敏）")"
+      print_report_line "Provider Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
+      print_report_line "Ollama Base URL" "$(sensitive_endpoint_display_value "${OLLAMA_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
       ;;
     paths)
       print_report_line "全局目录" "${GLOBAL_OPENCODE_DIR}"
@@ -1157,10 +1458,15 @@ cmd_config_show() {
       print_report_line "进阶包" "${ENHANCED_PACKS:-<空>}"
       print_report_line "探索包" "${EXPERIMENTAL_PACKS:-<空>}"
       print_report_line "SKILL_SPECS" "${SKILL_SPECS:-<空>}"
+      print_report_line "SKILL_EXCLUDES" "${SKILL_EXCLUDES:-<空>}"
       print_report_line "PLUGIN_SPECS" "${PLUGIN_SPECS:-<空>}"
+      print_report_line "PLUGIN_EXCLUDES" "${PLUGIN_EXCLUDES:-<空>}"
       print_report_line "HOOK_SPECS" "${HOOK_SPECS:-<空>}"
+      print_report_line "HOOK_EXCLUDES" "${HOOK_EXCLUDES:-<空>}"
       print_report_line "MCP_SPECS" "${MCP_SPECS:-<空>}"
+      print_report_line "MCP_EXCLUDES" "${MCP_EXCLUDES:-<空>}"
       print_report_line "AGENT_SPECS" "${AGENT_SPECS:-<空>}"
+      print_report_line "AGENT_EXCLUDES" "${AGENT_EXCLUDES:-<空>}"
       ;;
     *)
       die "config show 仅支持 --section summary|paths|extensions，收到：${section}"
@@ -1180,10 +1486,18 @@ cmd_config_init() {
       render_wrapper_script
       render_runtime_manifests
       render_support_notes_if_missing
+      render_shared_global_governance_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+      render_shared_global_role_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+      if [[ ! -f "${GLOBAL_AGENTS_PATH}" ]]; then
+        install -m 644 "${TOOL_GLOBAL_AGENTS_PATH}" "${GLOBAL_AGENTS_PATH}"
+      fi
       write_plugin_status_snapshot
       log_info "已初始化 OpenCode 工具目录：${TOOL_RUNTIME_ROOT}"
       log_info "已生成工具目录 opencode.json：${TOOL_GLOBAL_CONFIG_PATH}"
       log_info "已准备工具目录 AGENTS.md 模板：${TOOL_GLOBAL_AGENTS_PATH}"
+      log_info "已准备官方目录治理模板：${GLOBAL_AGENTS_DIR}"
+      log_info "已准备官方目录角色模板：${GLOBAL_AGENTS_DIR}"
+      log_info "已准备官方目录 AGENTS.md：${GLOBAL_AGENTS_PATH}"
       log_info "已生成工具目录 provider.env：${TOOL_ENV_PATH}"
       log_info "已生成工具目录包装命令：${TOOL_WRAPPER_PATH}"
       log_info "已生成初始化清单：${TOOL_PACKS_MANIFEST_PATH}、${TOOL_SKILLS_MANIFEST_PATH}、${TOOL_PLUGINS_MANIFEST_PATH}、${TOOL_HOOKS_MANIFEST_PATH}、${TOOL_MCP_MANIFEST_PATH}、${TOOL_AGENTS_MANIFEST_PATH}"

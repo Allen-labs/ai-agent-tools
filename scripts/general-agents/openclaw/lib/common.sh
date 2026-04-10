@@ -82,6 +82,18 @@ print_report_line() {
   printf '  %-24s %s\n' "${key}" "${value}"
 }
 
+sensitive_presence_display_value() {
+  local value="${1:-}"
+  local empty_label="${2:-缺失}"
+  local configured_label="${3:-已配置（已脱敏）}"
+
+  if [[ -n "${value}" ]]; then
+    printf '%s' "${configured_label}"
+  else
+    printf '%s' "${empty_label}"
+  fi
+}
+
 supports_color() {
   [[ -z "${NO_COLOR:-}" ]] || return 1
   if [[ -n "${FORCE_COLOR:-}" && "${FORCE_COLOR}" != "0" ]]; then
@@ -291,6 +303,126 @@ summarize_config() {
   echo "  飞书流式输出: ${FEISHU_STREAMING:-1}"
   echo "  长期记忆插件: ${ENABLE_MEMORY_PLUGIN:-0}/${MEMORY_PLUGIN:-none}"
   echo "  上下文引擎: ${ENABLE_CONTEXT_ENGINE:-0}/${CONTEXT_ENGINE:-none}"
+}
+
+openclaw_render_governance_files_if_missing() {
+  local governance_path="${OPENCLAW_STATE_DIR}/GOVERNANCE.md"
+  local engineering_path="${OPENCLAW_STATE_DIR}/ENGINEERING.md"
+  local delivery_path="${OPENCLAW_STATE_DIR}/DELIVERY.md"
+  local memory_rules_path="${OPENCLAW_STATE_DIR}/MEMORY-RULES.md"
+
+  mkdir -p "${OPENCLAW_STATE_DIR}"
+
+  if [[ ! -f "${governance_path}" ]]; then
+    cat > "${governance_path}" <<'EOF'
+# OpenClaw 全局治理约定
+
+## 目标
+- 保证 OpenClaw 服务长期稳定、可维护、可审计
+- 安全、性能、稳定性优先于临时方便
+- 官方目录只放长期有效的运行约束和维护规范
+
+## 默认原则
+- 变更前先看现有配置、systemd、Nginx、接入方式和回滚路径
+- 优先最小变更，避免影响正在运行的服务
+- 涉及公网暴露、消息接入、权限放行、长期记忆时必须明确说明
+- 工具脚本负责管理；长期规则回写到 `~/.openclaw`
+
+## 运维边界
+- 不随意扩大公网暴露面
+- 不默认放宽高权限执行策略
+- 配置、文档、脚本和运行状态保持一致
+- 关键异常、已知坑点和恢复方式要可沉淀、可复用
+EOF
+  fi
+
+  if [[ ! -f "${engineering_path}" ]]; then
+    cat > "${engineering_path}" <<'EOF'
+# 工程与运维规范
+
+## 服务变更
+- 先验证配置，再重载或重启
+- 先保活现网，再做增强
+- 涉及 systemd、Nginx、证书、防火墙时同步检查
+
+## 安全要求
+- 默认最小公网暴露
+- 敏感配置只记录状态，不在报告里回显明文
+- 限流、路径拦截、恶意来源防护优先保持开启
+- 执行权限档位保持最小满足原则
+
+## 稳定性要求
+- 网关、健康检查、消息接入都要可观测
+- 新增插件、skill、记忆组件时保留失败降级路径
+- 变更后至少执行最小健康检查和日志确认
+EOF
+  fi
+
+  if [[ ! -f "${delivery_path}" ]]; then
+    cat > "${delivery_path}" <<'EOF'
+# 交付与验收检查单
+
+## 变更前
+- 配置是否补齐
+- 接入方式是否明确
+- 回滚方式是否明确
+- 是否会影响现网服务
+
+## 变更后
+- `openclaw config validate` 是否通过
+- 网关和健康检查是否正常
+- 飞书 / 记忆 / Tailscale / Nginx 是否按启用项核对
+- 是否记录了未执行项与风险
+
+## 发布后观察
+- 服务日志
+- 网关探测
+- 健康检查
+- 外部入口可达性
+- 插件或 skill 初始化结果
+EOF
+  fi
+
+  if [[ ! -f "${memory_rules_path}" ]]; then
+    cat > "${memory_rules_path}" <<'EOF'
+# 记忆回写规则
+
+## 应回写
+- 长期有效的部署规范
+- 已确认的接入限制与绕行方案
+- 常见故障和恢复步骤
+- 默认能力包、权限档位、消息接入的稳定做法
+
+## 不回写
+- 一次性调试输出
+- 临时密钥或敏感凭据
+- 仅对单次排障有效的临时结论
+
+## 回写要求
+- 写结论，不写流水账
+- 写适用范围和触发条件
+- 新结论确认后及时更新，避免重复踩坑
+EOF
+  fi
+}
+
+openclaw_governance_state() {
+  local present="0"
+  local file_path=""
+
+  for file_path in \
+    "${OPENCLAW_STATE_DIR}/GOVERNANCE.md" \
+    "${OPENCLAW_STATE_DIR}/ENGINEERING.md" \
+    "${OPENCLAW_STATE_DIR}/DELIVERY.md" \
+    "${OPENCLAW_STATE_DIR}/MEMORY-RULES.md"; do
+    [[ -f "${file_path}" ]] && present=$((present + 1))
+  done
+
+  printf '%s/4' "${present}"
+}
+
+openclaw_governance_ready() {
+  [[ "$(openclaw_governance_state)" == "4/4" ]]
 }
 
 parse_args() {

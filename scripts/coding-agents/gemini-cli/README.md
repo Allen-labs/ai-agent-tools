@@ -24,6 +24,15 @@ Gemini CLI 也不改变统一入口和统一命令：
 
 - 官方状态目录：
   - `~/.gemini`
+- `service install / configure / config init --scope global` 现在会补：
+  - `~/.gemini/agents/global-governance.md`
+  - `~/.gemini/agents/engineering-standards.md`
+  - `~/.gemini/agents/delivery-checklist.md`
+  - `~/.gemini/agents/memory-rules.md`
+  - `~/.gemini/agents/planner.md`
+  - `~/.gemini/agents/implementer.md`
+  - `~/.gemini/agents/reviewer.md`
+  - `~/.gemini/agents/tester.md`
 - 工具目录本身承担备份、清单与生成配置：
   - `scripts/coding-agents/gemini-cli`
 - 会初始化：
@@ -34,7 +43,12 @@ Gemini CLI 也不改变统一入口和统一命令：
 - 真实扩展方向：
   - 优先官方 extension 安装模型
   - `service install / configure` 会真正尝试安装第一批官方 extension
+  - `service check / report` 会按官方安装元数据识别真实已安装目录，避免把官方扩展目录名和仓库名不一致的项误判成缺失
   - `service check / report` 会区分缺失、未生效、需人工处理，并显示最佳实践就绪度
+  - `service check / report` 会显示官方 `agents/` 目录治理模板和角色模板补齐度
+  - `AUTH_MODE` 现在支持 `api-key / google-login / vertex-ai`
+  - `scenario` 会先展示当前模式下准备安装的 extension，再决定是否增加或排除个别项
+  - `PLUGIN_SPECS` 用于额外增加，`PLUGIN_EXCLUDES` 用于从默认模式方案里排除
   - 默认基线只统计可自动安装的 extension；策略、agents、shared workflow 仍通过项目模板和清单默认落地
   - 当前工具专属默认包收敛为 `gemini-core + gemini-collaboration`
   - `PLUGIN_SPECS` 目前支持：

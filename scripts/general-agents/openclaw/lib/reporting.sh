@@ -34,11 +34,81 @@ run_preflight_checks() {
 }
 
 sandbox_network_restricted() {
+  case "${OPENCLAW_LOCAL_PROBE_MODE:-auto}" in
+    force)
+      return 1
+      ;;
+    skip)
+      return 0
+      ;;
+  esac
   [[ "${CODEX_SANDBOX_NETWORK_DISABLED:-0}" == "1" ]]
 }
 
 sandbox_system_restricted() {
   [[ "${CODEX_CI:-0}" == "1" ]]
+}
+
+display_toggle_state() {
+  local enabled="${1:-0}"
+  local enabled_label="${2:-开启}"
+  local disabled_label="${3:-关闭}"
+
+  if [[ "${enabled}" == "1" ]]; then
+    printf '%s' "${enabled_label}"
+  else
+    printf '%s' "${disabled_label}"
+  fi
+}
+
+display_named_toggle_state() {
+  local enabled="${1:-0}"
+  local name="${2:-}"
+  local enabled_prefix="${3:-开启}"
+  local disabled_prefix="${4:-关闭}"
+
+  if [[ "${enabled}" == "1" ]]; then
+    if [[ -n "${name}" && "${name}" != "none" ]]; then
+      printf '%s（%s）' "${enabled_prefix}" "${name}"
+    else
+      printf '%s' "${enabled_prefix}"
+    fi
+  else
+    if [[ -n "${name}" && "${name}" != "none" ]]; then
+      printf '%s（目标：%s）' "${disabled_prefix}" "${name}"
+    else
+      printf '%s' "${disabled_prefix}"
+    fi
+  fi
+}
+
+normalize_report_state() {
+  case "${1:-}" in
+    ok)
+      printf '正常'
+      ;;
+    missing)
+      printf '缺失'
+      ;;
+    present)
+      printf '已存在'
+      ;;
+    issued)
+      printf '已签发'
+      ;;
+    disabled)
+      printf '未启用'
+      ;;
+    "unknown(permission)")
+      printf '当前环境无法检测（权限受限）'
+      ;;
+    "restricted(sandbox-network)")
+      printf '当前环境无法探测（沙箱网络受限）'
+      ;;
+    *)
+      printf '%s' "${1:-}"
+      ;;
+  esac
 }
 
 command_needs_gateway_socket() {
@@ -153,6 +223,8 @@ render_deploy_report() {
   local approvals_state="missing"
   local access_entry="${DOMAIN:-<无>}"
   local tailscale_state="disabled"
+  local governance_state="0/4"
+  local probe_timeout="${OPENCLAW_REPORT_PROBE_TIMEOUT:-15}"
 
   if declare -F init_tool_layout_vars >/dev/null 2>&1; then
     init_tool_layout_vars
@@ -178,10 +250,10 @@ render_deploy_report() {
     access_entry="${TAILSCALE_HOSTNAME:-<无>}"
   fi
 
-  gateway_probe_state="$(probe_openclaw_command 5 openclaw gateway probe)"
-  health_state="$(probe_openclaw_command 5 openclaw health)"
+  gateway_probe_state="$(probe_openclaw_command "${probe_timeout}" openclaw gateway probe)"
+  health_state="$(probe_openclaw_command "${probe_timeout}" openclaw health)"
   if [[ "${ENABLE_MEMORY_PLUGIN:-0}" == "1" ]]; then
-    memory_state="$(probe_openclaw_command 5 openclaw memory status)"
+    memory_state="$(probe_openclaw_command "${probe_timeout}" openclaw memory status)"
   else
     memory_state="disabled"
   fi
@@ -189,32 +261,36 @@ render_deploy_report() {
   if [[ -f "${OPENCLAW_STATE_DIR}/exec-approvals.json" ]]; then
     approvals_state="present"
   fi
+  if declare -F openclaw_governance_state >/dev/null 2>&1; then
+    governance_state="$(openclaw_governance_state)"
+  fi
 
   log info "部署健康报告"
   print_report_line "访问模式" "${ACCESS_MODE:-standard}"
   print_report_line "访问入口" "${access_entry}"
-  print_report_line "网关服务" "${service_state}"
+  print_report_line "网关服务" "$(normalize_report_state "${service_state}")"
   print_report_line "网关端口" "${GATEWAY_PORT}"
   print_report_line "UI 域名" "${DOMAIN:-<无>}"
-  print_report_line "Tailscale" "${tailscale_state}"
-  print_report_line "Nginx" "${nginx_state}"
-  print_report_line "证书" "${cert_state}"
-  print_report_line "UFW 命令" "$(check_path_command ufw)"
-  print_report_line "Node 命令" "$(check_path_command node)"
-  print_report_line "OpenClaw 命令" "$(check_path_command openclaw)"
-  print_report_line "飞书接入" "${ENABLE_FEISHU:-0}"
-  print_report_line "飞书流式输出" "${FEISHU_STREAMING:-1}"
+  print_report_line "Tailscale" "$(normalize_report_state "${tailscale_state}")"
+  print_report_line "Nginx" "$(normalize_report_state "${nginx_state}")"
+  print_report_line "证书" "$(normalize_report_state "${cert_state}")"
+  print_report_line "UFW 命令" "$(normalize_report_state "$(check_path_command ufw)")"
+  print_report_line "Node 命令" "$(normalize_report_state "$(check_path_command node)")"
+  print_report_line "OpenClaw 命令" "$(normalize_report_state "$(check_path_command openclaw)")"
+  print_report_line "飞书接入" "$(display_toggle_state "${ENABLE_FEISHU:-0}")"
+  print_report_line "飞书流式输出" "$(display_toggle_state "${FEISHU_STREAMING:-1}")"
   print_report_line "备份目录" "${backup_root:-${BACKUP_ROOT:-<未配置>}}"
+  print_report_line "治理文件" "${OPENCLAW_STATE_DIR} (${governance_state})"
   print_report_line "权限档位" "${permissions_level}"
-  print_report_line "审批文件" "${approvals_state}"
-  print_report_line "长期记忆插件" "${ENABLE_MEMORY_PLUGIN:-0}/${MEMORY_PLUGIN:-none}"
-  print_report_line "上下文引擎" "${ENABLE_CONTEXT_ENGINE:-0}/${CONTEXT_ENGINE:-none}"
+  print_report_line "审批文件" "$(normalize_report_state "${approvals_state}")"
+  print_report_line "长期记忆插件" "$(display_named_toggle_state "${ENABLE_MEMORY_PLUGIN:-0}" "${MEMORY_PLUGIN:-none}")"
+  print_report_line "上下文引擎" "$(display_named_toggle_state "${ENABLE_CONTEXT_ENGINE:-0}" "${CONTEXT_ENGINE:-none}")"
   if sandbox_network_restricted; then
     print_report_line "本机探测限制" "当前环境禁用本机网络，gateway/health 结果仅供参考"
   fi
-  print_report_line "网关探测" "${gateway_probe_state}"
-  print_report_line "健康检查" "${health_state}"
-  print_report_line "记忆状态" "${memory_state}"
+  print_report_line "网关探测" "$(normalize_report_state "${gateway_probe_state}")"
+  print_report_line "健康检查" "$(normalize_report_state "${health_state}")"
+  print_report_line "记忆状态" "$(normalize_report_state "${memory_state}")"
 }
 
 status_action() {
@@ -228,6 +304,9 @@ check_action() {
   render_deploy_report
   printf '\n'
   log info "开始执行检查"
+  if declare -F openclaw_governance_ready >/dev/null 2>&1 && ! openclaw_governance_ready; then
+    log warn "OpenClaw 官方目录治理文件未补齐，建议先执行 bash manage.sh config init --tool-name openclaw --config <config> --scope global"
+  fi
   run_preflight_checks
   if sandbox_network_restricted; then
     log warn "检测到当前环境禁用了本机网络访问，gateway/health/approvals 检查将自动跳过。"
@@ -299,10 +378,10 @@ cert_check_action() {
 feishu_check_action() {
   log info "飞书接入检查"
   print_report_line "飞书启用" "${ENABLE_FEISHU:-0}"
-  print_report_line "App ID" "$([[ -n "${FEISHU_APP_ID:-}" ]] && echo 已填写 || echo 缺失)"
-  print_report_line "App Secret" "$([[ -n "${FEISHU_APP_SECRET:-}" ]] && echo 已填写 || echo 缺失)"
-  print_report_line "Verification Token" "$([[ -n "${FEISHU_VERIFICATION_TOKEN:-}" ]] && echo 已填写 || echo 缺失)"
-  print_report_line "Encrypt Key" "$([[ -n "${FEISHU_ENCRYPT_KEY:-}" ]] && echo 已填写 || echo 缺失)"
+  print_report_line "App ID" "$(sensitive_presence_display_value "${FEISHU_APP_ID:-}")"
+  print_report_line "App Secret" "$(sensitive_presence_display_value "${FEISHU_APP_SECRET:-}")"
+  print_report_line "Verification Token" "$(sensitive_presence_display_value "${FEISHU_VERIFICATION_TOKEN:-}")"
+  print_report_line "Encrypt Key" "$(sensitive_presence_display_value "${FEISHU_ENCRYPT_KEY:-}")"
   print_report_line "Require Mention" "${FEISHU_REQUIRE_MENTION:-0}"
   print_report_line "DM Policy" "${FEISHU_DM_POLICY:-open}"
   print_report_line "Streaming" "${FEISHU_STREAMING:-1}"

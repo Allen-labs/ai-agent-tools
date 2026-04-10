@@ -172,6 +172,7 @@ normalize_config() {
   ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}"
   API_TIMEOUT_MS="${API_TIMEOUT_MS:-600000}"
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:-1}"
+  CLAUDE_SKIP_ONBOARDING="${CLAUDE_SKIP_ONBOARDING:-1}"
   ENABLE_DEFAULT_SKILLS="${ENABLE_DEFAULT_SKILLS:-1}"
   ENABLE_DEFAULT_PLUGINS="${ENABLE_DEFAULT_PLUGINS:-1}"
   ENABLE_DEFAULT_HOOKS="${ENABLE_DEFAULT_HOOKS:-1}"
@@ -185,10 +186,15 @@ normalize_config() {
   EXPERIMENTAL_PACKS="${EXPERIMENTAL_PACKS:-experimental-bleeding-edge}"
   ENABLE_EXPERIMENTAL_PACKS="${ENABLE_EXPERIMENTAL_PACKS:-0}"
   SKILL_SPECS="${SKILL_SPECS:-}"
+  SKILL_EXCLUDES="${SKILL_EXCLUDES:-}"
   PLUGIN_SPECS="${PLUGIN_SPECS:-}"
+  PLUGIN_EXCLUDES="${PLUGIN_EXCLUDES:-}"
   HOOK_SPECS="${HOOK_SPECS:-}"
+  HOOK_EXCLUDES="${HOOK_EXCLUDES:-}"
   MCP_SPECS="${MCP_SPECS:-}"
+  MCP_EXCLUDES="${MCP_EXCLUDES:-}"
   AGENT_SPECS="${AGENT_SPECS:-}"
+  AGENT_EXCLUDES="${AGENT_EXCLUDES:-}"
   PERMISSIONS_ALLOW="${PERMISSIONS_ALLOW:-}"
   PERMISSIONS_DENY="${PERMISSIONS_DENY:-}"
   normalize_mode_profile
@@ -212,6 +218,7 @@ normalize_config() {
   TOOL_SETTINGS_PATH="${TOOL_GLOBAL_DIR}/settings.json"
   TOOL_SETTINGS_LOCAL_PATH="${TOOL_GLOBAL_DIR}/settings.local.json"
   TOOL_CLAUDE_MD_PATH="${TOOL_GLOBAL_DIR}/CLAUDE.md"
+  TOOL_ONBOARDING_PATH="${TOOL_GLOBAL_DIR}/claude.json"
   TOOL_MANIFESTS_DIR="${TOOL_RUNTIME_ROOT}/manifests"
   TOOL_PACKS_MANIFEST_PATH="${TOOL_MANIFESTS_DIR}/packs.manifest"
   TOOL_SKILLS_MANIFEST_PATH="${TOOL_MANIFESTS_DIR}/skills.manifest"
@@ -226,9 +233,9 @@ normalize_config() {
 
 refresh_plugin_plan() {
   if [[ "${ENABLE_DEFAULT_PLUGINS}" == "1" ]]; then
-    RESOLVED_PLUGIN_SPECS="$(resolve_installable_capability_items_csv "claude-code" "plugin" "repl-plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}")"
+    RESOLVED_PLUGIN_SPECS="$(resolve_installable_capability_items_csv "claude-code" "plugin" "repl-plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
   else
-    RESOLVED_PLUGIN_SPECS="${PLUGIN_SPECS}"
+    RESOLVED_PLUGIN_SPECS="$(csv_subtract "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
   fi
 }
 
@@ -596,6 +603,7 @@ plugin_list_json_contains_plugin() {
 
   [[ -f "${json_path}" ]] || return 1
 
+  grep -F "\"id\": \"${install_arg}\"" "${json_path}" >/dev/null 2>&1 && return 0
   grep -F "\"pluginId\": \"${install_arg}\"" "${json_path}" >/dev/null 2>&1 && return 0
   grep -F "\"name\": \"${plugin_name}\"" "${json_path}" >/dev/null 2>&1 && return 0
   return 1
@@ -663,8 +671,8 @@ write_plugin_status_snapshot() {
       status="需人工处理"
       detail="已接入 marketplace，但未能唯一确定 plugin 名，请显式写 plugin@source"
     else
-      status="需人工处理"
-      detail="当前 marketplace 中未找到该插件"
+      status="缺失"
+      detail="当前 marketplace 未收录该插件"
     fi
 
     printf '%s|%s|%s|%s\n' "${resolved_name:-${name}}" "${status}" "${source}" "${detail}" >> "${TOOL_PLUGIN_STATUS_PATH}"
@@ -687,6 +695,23 @@ plugin_status_summary() {
     "$(plugin_status_count "已安装")" \
     "$(plugin_status_count "缺失")" \
     "$(plugin_status_count "需人工处理")"
+}
+
+plugin_status_names_csv() {
+  local target_status="${1:-}"
+
+  [[ -f "${TOOL_PLUGIN_STATUS_PATH}" ]] || return 0
+
+  awk -F'|' -v target="${target_status}" '
+    NR > 2 && $2 == target {
+      names[++count] = $1
+    }
+    END {
+      for (i = 1; i <= count; i++) {
+        printf "%s%s", names[i], (i < count ? "," : "")
+      }
+    }
+  ' "${TOOL_PLUGIN_STATUS_PATH}"
 }
 
 sync_plugins() {
@@ -810,6 +835,67 @@ claude_best_practice_readiness() {
   fi
 }
 
+claude_onboarding_state_value() {
+  local session_path="${1:-${GLOBAL_SESSION_PATH}}"
+
+  if [[ ! -f "${session_path}" ]]; then
+    printf '缺失'
+  elif grep -Eq '"hasCompletedOnboarding"[[:space:]]*:[[:space:]]*true' "${session_path}"; then
+    printf '已启用'
+  else
+    printf '未启用'
+  fi
+}
+
+claude_base_url_display_value() {
+  local value="${1:-}"
+  local empty_label="${2:-未配置}"
+  local configured_label="${3:-已配置（已脱敏）}"
+
+  sensitive_endpoint_display_value "${value}" "${empty_label}" "${configured_label}"
+}
+
+render_onboarding_state_json() {
+  cat > "${TOOL_ONBOARDING_PATH}" <<EOF
+{
+  "hasCompletedOnboarding": $( [[ "${CLAUDE_SKIP_ONBOARDING}" == "1" ]] && printf 'true' || printf 'false' )
+}
+EOF
+}
+
+sync_onboarding_state() {
+  if [[ "${CLAUDE_SKIP_ONBOARDING}" != "1" ]]; then
+    log_info "已按配置跳过 ~/.claude.json 自动写入。"
+    return 0
+  fi
+
+  backup_path_if_exists "${GLOBAL_SESSION_PATH}" "Claude 引导状态文件"
+  if command -v node >/dev/null 2>&1; then
+    node - "${GLOBAL_SESSION_PATH}" <<'EOF'
+const fs = require("fs");
+const targetPath = process.argv[2];
+let payload = {};
+
+if (fs.existsSync(targetPath)) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      payload = parsed;
+    }
+  } catch (_) {
+    payload = {};
+  }
+}
+
+payload.hasCompletedOnboarding = true;
+fs.writeFileSync(targetPath, JSON.stringify(payload, null, 2) + "\n");
+EOF
+  else
+    install -m 600 "${TOOL_ONBOARDING_PATH}" "${GLOBAL_SESSION_PATH}"
+  fi
+  log_info "已同步引导跳过文件：${GLOBAL_SESSION_PATH}"
+}
+
 render_settings_json() {
   cat > "${TOOL_SETTINGS_PATH}" <<EOF
 {
@@ -873,11 +959,11 @@ EOF
 
 render_runtime_manifests() {
   write_pack_manifest "${TOOL_PACKS_MANIFEST_PATH}" "claude-code" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "Claude Code skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.claude/skills 目录结构" "claude-code" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "Claude Code plugin 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "默认仅初始化 ~/.claude/plugins 目录结构" "claude-code" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "Claude Code hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认保留为空，按团队约定再补" "claude-code" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "Claude Code MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "claude-code" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "Claude Code agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.claude/agents 目录结构" "claude-code" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
+  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "Claude Code skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.claude/skills 目录结构" "claude-code" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${SKILL_EXCLUDES}"
+  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "Claude Code plugin 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "默认仅初始化 ~/.claude/plugins 目录结构" "claude-code" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_EXCLUDES}"
+  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "Claude Code hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认保留为空，按团队约定再补" "claude-code" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${HOOK_EXCLUDES}"
+  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "Claude Code MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "claude-code" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${MCP_EXCLUDES}"
+  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "Claude Code agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.claude/agents 目录结构" "claude-code" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${AGENT_EXCLUDES}"
 }
 
 render_support_notes_if_missing() {
@@ -998,9 +1084,12 @@ sync_global_config() {
   ensure_runtime_layout
   render_settings_json
   render_settings_local_template
+  render_onboarding_state_json
   render_claude_md_if_missing
   render_runtime_manifests
   render_support_notes_if_missing
+  render_shared_global_governance_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+  render_shared_global_role_templates_if_missing "${GLOBAL_AGENTS_DIR}"
 
   backup_path_if_exists "${GLOBAL_SETTINGS_PATH}" "Claude settings.json"
   install -m 600 "${TOOL_SETTINGS_PATH}" "${GLOBAL_SETTINGS_PATH}"
@@ -1020,6 +1109,8 @@ sync_global_config() {
     log_info "保留现有全局 CLAUDE.md：${GLOBAL_CLAUDE_MD_PATH}"
   fi
 
+  sync_onboarding_state
+
   sync_plugins "${plugin_mode}"
   log_info "已生成初始化清单：${TOOL_PACKS_MANIFEST_PATH}、${TOOL_SKILLS_MANIFEST_PATH}、${TOOL_PLUGINS_MANIFEST_PATH}、${TOOL_HOOKS_MANIFEST_PATH}、${TOOL_MCP_MANIFEST_PATH}、${TOOL_AGENTS_MANIFEST_PATH}"
 }
@@ -1029,8 +1120,9 @@ print_summary() {
   log_info "安装方式：${INSTALL_METHOD}"
   log_info "模型：${DEFAULT_MODEL}"
   log_info "认证方式：${AUTH_MODE}"
+  log_info "跳过登录引导：${CLAUDE_SKIP_ONBOARDING}"
   if [[ -n "${ANTHROPIC_BASE_URL}" ]]; then
-    log_info "自定义 Base URL：${ANTHROPIC_BASE_URL}"
+    log_info "自定义 Base URL：$(claude_base_url_display_value "${ANTHROPIC_BASE_URL}")"
   fi
   log_info "官方目录：${GLOBAL_CLAUDE_DIR}"
   log_info "工具目录：${TOOL_RUNTIME_ROOT}"
@@ -1095,14 +1187,19 @@ cmd_service_check() {
   local plugins_exists="no"
   local skills_exists="no"
   local agents_exists="no"
+  local onboarding_state="缺失"
   local current_model="未检测到"
   local auth_mode="未检测到"
   local base_url="未检测到"
   local plugin_missing_count="0"
+  local plugin_missing_names=""
+  local plugin_manual_names=""
   local plugin_summary="未检测到"
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / plugin 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_PLUGIN_STATUS_PATH TOOL_AVAILABLE_PLUGINS_JSON_PATH TOOL_INSTALLED_PLUGINS_JSON_PATH
@@ -1125,6 +1222,9 @@ cmd_service_check() {
   [[ -d "${GLOBAL_PLUGINS_DIR}" ]] && plugins_exists="yes"
   [[ -d "${GLOBAL_SKILLS_DIR}" ]] && skills_exists="yes"
   [[ -d "${GLOBAL_AGENTS_DIR}" ]] && agents_exists="yes"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_AGENTS_DIR}")"
+  onboarding_state="$(claude_onboarding_state_value "${GLOBAL_SESSION_PATH}")"
 
   if [[ -f "${GLOBAL_SETTINGS_PATH}" ]]; then
     current_model="$(extract_json_string_value "model" "${GLOBAL_SETTINGS_PATH}")"
@@ -1141,10 +1241,17 @@ cmd_service_check() {
   write_plugin_status_snapshot
   runtime_state="$(claude_runtime_state "${claude_path}" "${settings_exists}" "${auth_mode}")"
   plugin_missing_count="$(plugin_status_count "缺失")"
+  plugin_missing_names="$(plugin_status_names_csv "缺失")"
+  plugin_manual_names="$(plugin_status_names_csv "需人工处理")"
   plugin_summary="$(plugin_status_summary)"
   readiness_summary="$(claude_best_practice_readiness "${claude_path}" "${settings_exists}" "${auth_mode}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "plugin")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / plugin $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${runtime_state}" in
@@ -1166,21 +1273,31 @@ cmd_service_check() {
     [[ "$(setting_compare_state "${base_url}" "${ANTHROPIC_BASE_URL:-}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "Base URL 与目标不一致")"
   fi
 
-  [[ "${plugin_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 plugin 缺失 ${plugin_missing_count} 项")"
+  [[ "${plugin_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 plugin 缺失 ${plugin_missing_count} 项${plugin_missing_names:+（${plugin_missing_names}）}")"
   [[ "${claude_md_exists}" != "yes" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局 CLAUDE.md 未初始化")"
+  if [[ "${CLAUDE_SKIP_ONBOARDING}" == "1" && "${onboarding_state}" != "已启用" ]]; then
+    not_ready_reason="$(append_reason_text "${not_ready_reason}" "缺少 ~/.claude.json 跳过登录状态")"
+  fi
+  ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_report_line "settings.json" "${GLOBAL_SETTINGS_PATH} (${settings_exists})"
   print_report_line "settings.local" "${GLOBAL_SETTINGS_LOCAL_PATH} (${settings_local_exists})"
+  print_report_line "引导跳过文件" "${GLOBAL_SESSION_PATH} (${onboarding_state})"
   print_report_line "全局 CLAUDE.md" "${GLOBAL_CLAUDE_MD_PATH} (${claude_md_exists})"
+  print_report_line "全局治理模板" "${GLOBAL_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_AGENTS_DIR} (${global_role_state})"
   print_report_line "运行状态" "${runtime_state}"
   print_report_line "建议动作" "$(recommended_service_action "claude-code" "${runtime_state}" "${CONFIG_FILE:-}")"
   [[ -n "${not_ready_reason}" ]] && print_report_line "未就绪原因" "${not_ready_reason}"
   print_report_line "最佳实践就绪度" "${readiness_summary}"
   print_report_line "当前模型" "${current_model}"
   print_report_line "认证模式" "${auth_mode}"
-  print_report_line "Base URL" "${base_url}"
+  print_report_line "Base URL" "$(claude_base_url_display_value "${base_url}")"
   print_report_line "插件目录" "${GLOBAL_PLUGINS_DIR} (${plugins_exists})"
   print_report_line "插件状态" "${plugin_summary}"
+  [[ -n "${plugin_missing_names}" ]] && print_report_line "缺失 plugin" "${plugin_missing_names}"
+  [[ -n "${plugin_manual_names}" ]] && print_report_line "人工处理 plugin" "${plugin_manual_names}"
   print_report_line "技能目录" "${GLOBAL_SKILLS_DIR} (${skills_exists})"
   print_report_line "Agents 目录" "${GLOBAL_AGENTS_DIR} (${agents_exists})"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
@@ -1200,7 +1317,7 @@ cmd_service_check() {
     print_report_line "目标配置文件" "${CONFIG_FILE}"
     print_report_line "目标模型" "${DEFAULT_MODEL}"
     print_report_line "目标认证" "${AUTH_MODE}"
-    print_report_line "目标 Base URL" "${ANTHROPIC_BASE_URL:-未声明}"
+    print_report_line "目标 Base URL" "$(claude_base_url_display_value "${ANTHROPIC_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
     print_report_line "模型比对" "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")"
     print_report_line "认证比对" "$(setting_compare_state "${auth_mode}" "${AUTH_MODE}")"
     print_report_line "Base URL 比对" "$(setting_compare_state "${base_url}" "${ANTHROPIC_BASE_URL:-}")"
@@ -1212,14 +1329,19 @@ cmd_service_report() {
   local install_state="未安装"
   local not_ready_reason=""
   local settings_state="missing"
+  local onboarding_state="缺失"
   local current_model="未检测到"
   local auth_mode="未检测到"
   local base_url="未检测到"
   local plugin_missing_count="0"
+  local plugin_missing_names=""
+  local plugin_manual_names=""
   local plugin_summary="未检测到"
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / plugin 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_PLUGIN_STATUS_PATH TOOL_AVAILABLE_PLUGINS_JSON_PATH TOOL_INSTALLED_PLUGINS_JSON_PATH
@@ -1242,14 +1364,24 @@ cmd_service_report() {
     base_url="$(extract_json_string_value "ANTHROPIC_BASE_URL" "${GLOBAL_SETTINGS_PATH}")"
     [[ -n "${base_url}" ]] || base_url="未配置"
   fi
+  onboarding_state="$(claude_onboarding_state_value "${GLOBAL_SESSION_PATH}")"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_AGENTS_DIR}")"
 
   write_plugin_status_snapshot
   install_state="$(claude_runtime_state "${claude_path}" "$( [[ "${settings_state}" == "present" ]] && printf 'yes' || printf 'no' )" "${auth_mode}")"
   plugin_missing_count="$(plugin_status_count "缺失")"
+  plugin_missing_names="$(plugin_status_names_csv "缺失")"
+  plugin_manual_names="$(plugin_status_names_csv "需人工处理")"
   plugin_summary="$(plugin_status_summary)"
   readiness_summary="$(claude_best_practice_readiness "${claude_path}" "$( [[ "${settings_state}" == "present" ]] && printf 'yes' || printf 'no' )" "${auth_mode}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "plugin")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / plugin $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${install_state}" in
@@ -1270,7 +1402,12 @@ cmd_service_report() {
     [[ "$(setting_compare_state "${auth_mode}" "${AUTH_MODE}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "认证模式与目标不一致")"
   fi
 
-  [[ "${plugin_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 plugin 缺失 ${plugin_missing_count} 项")"
+  [[ "${plugin_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 plugin 缺失 ${plugin_missing_count} 项${plugin_missing_names:+（${plugin_missing_names}）}")"
+  if [[ "${CLAUDE_SKIP_ONBOARDING}" == "1" && "${onboarding_state}" != "已启用" ]]; then
+    not_ready_reason="$(append_reason_text "${not_ready_reason}" "缺少 ~/.claude.json 跳过登录状态")"
+  fi
+  ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_section "Claude Code 概览"
   print_report_line "安装状态" "${install_state}"
@@ -1279,12 +1416,17 @@ cmd_service_report() {
   print_report_line "Claude 命令" "${claude_path:-未安装}"
   print_report_line "当前模型" "${current_model}"
   print_report_line "认证模式" "${auth_mode}"
-  print_report_line "Base URL" "${base_url}"
+  print_report_line "Base URL" "$(claude_base_url_display_value "${base_url}")"
   print_report_line "settings.json" "${GLOBAL_SETTINGS_PATH} (${settings_state})"
+  print_report_line "引导跳过文件" "${GLOBAL_SESSION_PATH} (${onboarding_state})"
+  print_report_line "全局治理模板" "${GLOBAL_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_AGENTS_DIR} (${global_role_state})"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
   print_report_line "最佳实践就绪度" "${readiness_summary}"
   print_report_line "能力包策略" "$(pack_strategy_summary "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}")"
   print_report_line "插件状态" "${plugin_summary}"
+  [[ -n "${plugin_missing_names}" ]] && print_report_line "缺失 plugin" "${plugin_missing_names}"
+  [[ -n "${plugin_manual_names}" ]] && print_report_line "人工处理 plugin" "${plugin_manual_names}"
   print_report_line "核心能力统计" "${capability_stats}"
   print_report_line "能力项统计" "${capability_counts}"
   print_report_line "能力包清单" "${TOOL_PACKS_MANIFEST_PATH} ($(path_state "${TOOL_PACKS_MANIFEST_PATH}"))"
@@ -1360,7 +1502,7 @@ cmd_config_show() {
       print_report_line "安装方式" "${INSTALL_METHOD}"
       print_report_line "模型" "${DEFAULT_MODEL}"
       print_report_line "认证方式" "${AUTH_MODE}"
-      print_report_line "Base URL" "${ANTHROPIC_BASE_URL:-未声明}"
+      print_report_line "Base URL" "$(claude_base_url_display_value "${ANTHROPIC_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
       print_report_line "API 超时" "${API_TIMEOUT_MS}"
       print_report_line "非必要流量" "${CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC}"
       print_report_line "允许权限数" "$(csv_item_count "${PERMISSIONS_ALLOW}")"
@@ -1390,10 +1532,15 @@ cmd_config_show() {
       print_report_line "进阶包" "${ENHANCED_PACKS:-<空>}"
       print_report_line "探索包" "${EXPERIMENTAL_PACKS:-<空>}"
       print_report_line "SKILL_SPECS" "${SKILL_SPECS:-<空>}"
+      print_report_line "SKILL_EXCLUDES" "${SKILL_EXCLUDES:-<空>}"
       print_report_line "PLUGIN_SPECS" "${PLUGIN_SPECS:-<空>}"
+      print_report_line "PLUGIN_EXCLUDES" "${PLUGIN_EXCLUDES:-<空>}"
       print_report_line "HOOK_SPECS" "${HOOK_SPECS:-<空>}"
+      print_report_line "HOOK_EXCLUDES" "${HOOK_EXCLUDES:-<空>}"
       print_report_line "MCP_SPECS" "${MCP_SPECS:-<空>}"
+      print_report_line "MCP_EXCLUDES" "${MCP_EXCLUDES:-<空>}"
       print_report_line "AGENT_SPECS" "${AGENT_SPECS:-<空>}"
+      print_report_line "AGENT_EXCLUDES" "${AGENT_EXCLUDES:-<空>}"
       ;;
     *)
       die "config show 仅支持 --section summary|paths|extensions，收到：${section}"
@@ -1409,13 +1556,27 @@ cmd_config_init() {
       ensure_runtime_layout
       render_settings_json
       render_settings_local_template
+      render_onboarding_state_json
       render_claude_md_if_missing
       render_runtime_manifests
       render_support_notes_if_missing
+      render_shared_global_governance_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+      render_shared_global_role_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+      if [[ ! -f "${GLOBAL_SETTINGS_LOCAL_PATH}" ]]; then
+        install -m 600 "${TOOL_SETTINGS_LOCAL_PATH}" "${GLOBAL_SETTINGS_LOCAL_PATH}"
+      fi
+      if [[ ! -f "${GLOBAL_CLAUDE_MD_PATH}" ]]; then
+        install -m 644 "${TOOL_CLAUDE_MD_PATH}" "${GLOBAL_CLAUDE_MD_PATH}"
+      fi
       log_info "已初始化 Claude Code 工具目录：${TOOL_RUNTIME_ROOT}"
       log_info "已生成工具目录 settings.json：${TOOL_SETTINGS_PATH}"
       log_info "已生成工具目录 settings.local.json：${TOOL_SETTINGS_LOCAL_PATH}"
+      log_info "已生成工具目录引导跳过模板：${TOOL_ONBOARDING_PATH}"
       log_info "已准备工具目录 CLAUDE.md 模板：${TOOL_CLAUDE_MD_PATH}"
+      log_info "已准备官方目录治理模板：${GLOBAL_AGENTS_DIR}"
+      log_info "已准备官方目录角色模板：${GLOBAL_AGENTS_DIR}"
+      log_info "已准备官方目录 settings.local.json：${GLOBAL_SETTINGS_LOCAL_PATH}"
+      log_info "已准备官方目录 CLAUDE.md：${GLOBAL_CLAUDE_MD_PATH}"
       write_plugin_status_snapshot
       log_info "已生成初始化清单：${TOOL_PACKS_MANIFEST_PATH}、${TOOL_SKILLS_MANIFEST_PATH}、${TOOL_PLUGINS_MANIFEST_PATH}、${TOOL_HOOKS_MANIFEST_PATH}、${TOOL_MCP_MANIFEST_PATH}、${TOOL_AGENTS_MANIFEST_PATH}"
       ;;

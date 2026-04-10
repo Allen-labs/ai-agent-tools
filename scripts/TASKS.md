@@ -19,6 +19,7 @@
 
 ### 已完成
 
+- 这一节默认表示“脚本能力、文档与目录治理层已完成”，不等于所有工具都已经在当前机器完成实机安装验证
 - 顶层统一入口已建立：`manage.sh`
 - `openclaw` 和四个 coding agent 已接入统一路由
 - 顶层文档、子文档、帮助输出、配置样例，已经基本按同一套场景化心智收敛：
@@ -35,9 +36,11 @@
   - 可按场景自动串起 install / configure / report / check / init
   - 已补成步骤式全交互向导：选工具、选场景、选配置文件、补关键配置、确认执行
   - 已能在执行前补齐关键配置并写回 `local.conf`
+  - 配置写入底层能力已收敛到顶层 `config set`，`scenario` 只做交互与编排
   - 已能在配置文件不存在时自动从 `conf.example` 创建
   - `openclaw` 已补“部署形态”引导，不再直接暴露访问模式细节给首次使用者
   - 常见安装 / 增强场景已默认沿用推荐模型和模式，只在用户明确要求时展开进阶项
+  - 已补 `back / b / q` 导航链路，关键配置阶段可回到本阶段开头
 - 四个 coding agent 已完成：
   - 安装 / 更新 / 卸载 / 配置重放 / 检查
   - 全局 / 项目初始化
@@ -45,6 +48,21 @@
   - manifest 生成
   - `service report`
   - `config show`
+- 四个 coding agent 已补官方 `agents/` 目录治理层：
+  - `global-governance.md`
+  - `engineering-standards.md`
+  - `delivery-checklist.md`
+  - `memory-rules.md`
+  - `planner.md`
+  - `implementer.md`
+  - `reviewer.md`
+  - `tester.md`
+- `service report / check` 已把全局治理模板和全局角色模板补齐度纳入输出
+- OpenClaw 已补 `~/.openclaw` 治理文件：
+  - `GOVERNANCE.md`
+  - `ENGINEERING.md`
+  - `DELIVERY.md`
+  - `MEMORY-RULES.md`
 - 目录模型已收敛：
   - 官方目录保留在工具默认位置
   - 工具侧生成的备份、清单、包装命令写回各自工具目录
@@ -74,6 +92,7 @@
   - 默认记忆
   - 场景闭环
   - 支持功能 / 按需能力
+- 共享日志、分节标题和报告输出已统一走彩色结构化样式，减少纯文本提示造成的歧义
 - 四个 coding agent 的 `service check / report` 已补“建议动作”输出，可直接提示下一条该执行 `service install` 还是 `service configure`
 - 四个 coding agent 的 `service check / report` 已补“未就绪原因”输出，可直接说明当前为什么没有达到推荐基线
 - 四个 coding agent 的 `service check / report` 已补“能力包策略”输出，可直接看默认包、增强包、实验包的启用状态
@@ -90,6 +109,9 @@
   - 已生成并增强共享的 `project-context / architecture / workflow / checklist`
   - 已补角色分工、持续记忆、测试基线、发布与回滚检查单
   - 还需要继续补更强的工具级使用指引
+- 官方目录治理层
+  - 已能自动补齐并纳入检查
+  - 还需要继续补更完整的实机验证与失败降级说明
 - 能力包模型
   - 已能配置和检查
   - `codex / claude-code / gemini-cli / opencode` 已进入第一批真实落地
@@ -104,7 +126,7 @@
 - `openclaw` 和四个 coding agent 还缺少更完整的非破坏性实机生命周期验证
 - 默认精选能力包还需要继续按“双口径统计 + 实机反馈”收敛成更明确、更强的推荐组合
 - 登录、授权、429、未注册等第三方来源问题，还需要按工具分别补清晰提示和降级说明
-- 各工具“最佳使用方式”的引导还需要继续加强，尤其是全局配置和项目配置如何配合使用
+- 各工具“最佳使用方式”的引导还需要继续加强，尤其是官方全局目录与项目目录如何配合使用
 - `scenario` 还可以继续补更细的工具级最佳实践提示，但主链路已经可用
 
 ## 三类场景验证矩阵
@@ -151,6 +173,7 @@
 - 深化 `claude-code` 的第三方 marketplace / plugin 来源策略
 - 深化 `gemini-cli` 的 extension 可用性校验
 - 深化 `opencode` 的 plugin 已配置 / 已安装 / 未生效 校验
+- 对官方目录治理层补更多实机验证和失败提示
 
 ### P2
 

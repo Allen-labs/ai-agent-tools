@@ -23,6 +23,7 @@
 - 用户侧入口和命令保持统一，不因为工具不同而改变主用法
 - 官方状态目录保留在各工具默认位置
 - 工具侧生成的备份、清单、包装命令统一落在各自工具目录
+- 官方 `agents/` 目录现在承载全局治理模板和全局角色模板
 - 日常优先只记：
   - `service install`
   - `service configure`
@@ -30,7 +31,22 @@
   - `service report`
   - `service check`
 - `service check` 只读，不直接覆盖现有配置
+- `service report / check / config show` 默认对 Base URL、Key、Token、Secret 这类敏感项只给状态，不直接回显真实值
+- `scenario` 交互阶段为便于确认，会明文展示 URL / 地址类当前值；Key / Token / Secret 继续隐藏输入
+- `service check / report` 会把缺失、未生效、待生效、需人工处理的能力项名称直接列出来，避免只给数量
 - 扩展目录和 manifest 由 `service install / config init` 自动准备
+
+## 最佳实践包含什么
+
+- 安装、更新、卸载、接管和状态检查
+- 官方全局目录与项目目录的初始化
+- 官方 `agents/` 目录里的全局治理模板、角色模板和记忆回写规则
+- 推荐模型、认证方式、provider 与安全策略
+- `standard / advanced / exploration` 三档模式
+- 默认能力包覆盖 `skill / plugin / extension / hook / MCP / agent / memory`
+- 项目模板覆盖上下文、架构、流程、检查单和角色分工
+- `service report / check` 的就绪度、差异项和建议动作
+- `scenario` 的交互式补齐与执行闭环
 
 ## 统一使用方式
 
@@ -75,6 +91,13 @@ bash manage.sh service report --tool-name codex --config ./coding-agents/codex/l
 - 先看状态用 `service report`
 - 验证推荐基线用 `service check`
 
+补充：
+
+- `scenario` 在 `install / enhance / migrate` 时，会先补关键接入项，再展示当前模式下要安装的主能力
+- 这里的“主能力”按工具不同分别是：`codex=skill`、`claude-code=plugin`、`gemini-cli=extension`、`opencode=plugin`
+- 如果用户要高阶定制，可以在 `scenario` 里直接增加或排除个别项
+- 对配置文件来说，`*_SPECS` 是额外增加，`*_EXCLUDES` 是从当前模式默认方案里排除
+
 ## 默认基线原则
 
 - 默认只放稳定、通用、可自动落地的核心能力
@@ -95,6 +118,16 @@ bash manage.sh service report --tool-name codex --config ./coding-agents/codex/l
 - 最佳实践模板、hooks、agents、memory 引导会默认落地，但不强行算成“必须安装成功的插件”
 - `service check / report` 中的真实安装状态，只统计当前工具能够自动处理的那部分能力
 
+## 当前已落地范围
+
+- 四个 coding tools 已全部支持统一入口与统一帮助
+- `scenario` 已支持关键配置补齐、返回上一层、退出、执行前确认
+- `scenario` 已支持按当前模式预览主能力安装计划，并增删个别项
+- 四个工具的 `config show --section extensions` 已统一展示模式、默认包、显式增加项和排除项
+- 四个工具的 `conf.example` 已统一提供 `*_SPECS / *_EXCLUDES` 示例口径
+- 四个工具的 `service install / configure / config init --scope global` 已补官方 `agents/` 目录治理模板
+- 四个工具的 `service report / check` 已直接显示全局治理模板和全局角色模板补齐度
+
 ## 当前能力边界
 
 - 已完成：
@@ -104,6 +137,8 @@ bash manage.sh service report --tool-name codex --config ./coding-agents/codex/l
   - `service report`
   - `config show`
   - 共享项目模板：`project-context / architecture / workflow / checklist`
+  - 官方 `agents/` 目录治理模板：`global-governance / engineering-standards / delivery-checklist / memory-rules`
+  - 官方 `agents/` 目录角色模板：`planner / implementer / reviewer / tester`
   - 项目模板已补角色分工、持续记忆、测试基线、发布与回滚检查单
   - 项目 agents 目录已默认生成 `planner / implementer / reviewer / tester` 角色模板
   - `service check / report` 的最佳实践就绪度

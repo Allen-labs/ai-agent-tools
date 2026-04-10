@@ -122,13 +122,52 @@
 - 有能力包设计
 - 有配置包设计
 - 有初始化模板
+- 有官方 `.xx` 目录治理层
 - 有使用范式模板
 - 有安全护栏
 - 有一致性检查
 - 有默认工作流
 - 有最佳使用指引
 
-### 4. 当前和目标状态
+### 4. 官方 `.xx` 目录契约
+
+最佳实践现在明确分成两层，不再混在一起：
+
+- 工具目录
+  - 只放脚本、配置样例、备份、manifest、包装命令、状态快照
+  - 作用是可管理、可回放、可检查
+- 官方 `.xx` 目录
+  - 放工具长期生效的全局约束
+  - 作用是让工具在真实使用时带着推荐的工程纪律和协作规范运行
+
+对 coding tools，当前会在官方 `agents/` 目录中补这一层：
+
+- `global-governance.md`
+- `engineering-standards.md`
+- `delivery-checklist.md`
+- `memory-rules.md`
+- `planner.md`
+- `implementer.md`
+- `reviewer.md`
+- `tester.md`
+
+这层文件的定位是：
+
+- 只放长期有效的工程规则
+- 不放单项目私有上下文
+- 由 `service install / configure` 和 `config init --scope global` 自动补齐
+- 由 `service report / check` 直接检查是否补齐
+
+对 OpenClaw，当前会在 `~/.openclaw` 中补这一层：
+
+- `GOVERNANCE.md`
+- `ENGINEERING.md`
+- `DELIVERY.md`
+- `MEMORY-RULES.md`
+
+目的不是给 OpenClaw 人为套一层新运行模型，而是把长期有效的运维规则、交付门槛和记忆回写规则放回官方目录本身。
+
+### 5. 当前和目标状态
 
 当前已具备：
 
@@ -140,6 +179,10 @@
 - 能力项统计与元信息
 - 仓库级 review
 - 非破坏性全局初始化回归
+- 官方 `.xx` 目录治理层：
+  - coding tools 已在官方 `agents/` 目录落全局治理模板和角色模板
+  - OpenClaw 已在 `~/.openclaw` 落治理文件
+  - `service report / check` 已把这层纳入可见状态
 - 项目级共享模板：
   - `project-context`
   - `architecture`
@@ -163,10 +206,10 @@
 - `codex / claude-code` 更广第三方生态的进一步自动化
 - 三类来源的统一安装策略继续收敛
 - 安装结果的深度校验
-- 更完整的 role / memory / guide 初始化
+- 更完整的工具级使用指引与实机验证闭环
 - 默认使用范式和最佳实践引导
 
-### 5. review 的边界
+### 6. review 的边界
 
 `manage.sh tool review` 的目标是验证：
 
@@ -250,7 +293,9 @@
 
 - 主链路：`service install`、`config init`、`service check`
 - 可选运维：`service configure / update / uninstall`
-- 轻量管理：后续补 `service report`、`config backup / restore / show`
+- 轻量管理：`service report / config show` 已具备；`config backup / restore` 只在工具已支持时开放
+- 交互向导：`scenario` 只负责采集输入、编排流程、调用正式命令；不再承载独立底层能力
+- 顶层底座：`config set` 负责统一配置写入，供 `scenario` 和人工操作共同复用
 
 这里的“更轻”不是能力更弱，而是命令更收敛：
 

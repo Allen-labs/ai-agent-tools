@@ -25,8 +25,15 @@ OpenClaw 仍然走统一入口和统一命令，只是它比 coding agents 多�
 - OpenClaw 属于服务型工具，不是单纯 CLI
 - 常用命令面会比 coding agents 更完整
 - 全局层遵循 OpenClaw 官方目录：`~/.openclaw/openclaw.json`、`~/.openclaw/exec-approvals.json`、`~/.openclaw/skills`、`~/.openclaw/extensions`
+- `service install / configure / config init --scope global` 现在还会补：
+  - `~/.openclaw/GOVERNANCE.md`
+  - `~/.openclaw/ENGINEERING.md`
+  - `~/.openclaw/DELIVERY.md`
+  - `~/.openclaw/MEMORY-RULES.md`
 - 工具侧只保留仓库目录内的脚本、静态 wrapper 和默认备份目录，服务名与权限档位直接从配置文件读取
 - 项目层遵循 OpenClaw 官方优先级：`<workspace>/skills` 优先于 `~/.openclaw/skills`
+- `feishu check / service report / 配置摘要` 对 Base URL、Token、Secret 这类敏感项默认只显示状态，不回显真实值
+- `service report / check` 会显示 `~/.openclaw` 治理文件补齐度
 
 ## 快速使用
 

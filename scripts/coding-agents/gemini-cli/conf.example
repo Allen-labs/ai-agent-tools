@@ -15,6 +15,7 @@ GEMINI_PACKAGE=@google/gemini-cli@latest
 # 1. 按当前真实环境修改本文件
 # 2. 执行：bash manage.sh service configure --tool-name gemini-cli --config ./coding-agents/gemini-cli/local.conf --yes
 # api-key: 使用 GEMINI_API_KEY / GOOGLE_API_KEY
+# google-login: 使用 gemini 自己的浏览器登录态
 # vertex-ai: 使用 GOOGLE_CLOUD_PROJECT 等环境变量
 AUTH_MODE=api-key
 
@@ -72,8 +73,15 @@ EXPERIMENTAL_PACKS=experimental-bleeding-edge
 # 3. GitHub 仓库：your-org/your-extension
 # 4. GitHub URL：https://github.com/your-org/your-extension
 # 5. 本地路径：./extensions/your-extension
+# *_SPECS: 在模式默认方案之外额外增加
+# *_EXCLUDES: 从模式默认方案里排除；适合你保留 standard/advanced，但不想装其中个别项
 SKILL_SPECS=
+SKILL_EXCLUDES=
 PLUGIN_SPECS=
+PLUGIN_EXCLUDES=
 HOOK_SPECS=
+HOOK_EXCLUDES=
 MCP_SPECS=
+MCP_EXCLUDES=
 AGENT_SPECS=
+AGENT_EXCLUDES=

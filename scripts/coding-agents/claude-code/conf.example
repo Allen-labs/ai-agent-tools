@@ -25,6 +25,10 @@ CLAUDE_PACKAGE=@anthropic-ai/claude-code@latest
 # auth-token: Bearer Token / 长令牌模式
 AUTH_MODE=api-key
 
+# API / Token 模式下，默认写入 ~/.claude.json 的 hasCompletedOnboarding=true
+# 用于跳过 Claude Code 首次登录引导；通常建议保持开启
+CLAUDE_SKIP_ONBOARDING=1
+
 # 三、模型与访问
 DEFAULT_MODEL=claude-sonnet-4-6
 
@@ -83,8 +87,15 @@ EXPERIMENTAL_PACKS=experimental-bleeding-edge
 # 说明：
 # - 第三方来源会先尝试接入 marketplace，再解析可安装 plugin
 # - 如果一个 marketplace 暴露多个 plugin，建议显式写成 plugin@source
+# *_SPECS: 在模式默认方案之外额外增加
+# *_EXCLUDES: 从模式默认方案里排除；适合你保留 standard/advanced，但不想装其中个别项
 SKILL_SPECS=
+SKILL_EXCLUDES=
 PLUGIN_SPECS=
+PLUGIN_EXCLUDES=
 HOOK_SPECS=
+HOOK_EXCLUDES=
 MCP_SPECS=
+MCP_EXCLUDES=
 AGENT_SPECS=
+AGENT_EXCLUDES=

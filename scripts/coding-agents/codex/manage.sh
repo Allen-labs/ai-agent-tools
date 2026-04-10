@@ -215,10 +215,15 @@ normalize_config() {
   EXPERIMENTAL_PACKS="${EXPERIMENTAL_PACKS:-experimental-bleeding-edge}"
   ENABLE_EXPERIMENTAL_PACKS="${ENABLE_EXPERIMENTAL_PACKS:-0}"
   SKILL_SPECS="${SKILL_SPECS:-}"
+  SKILL_EXCLUDES="${SKILL_EXCLUDES:-}"
   PLUGIN_SPECS="${PLUGIN_SPECS:-}"
+  PLUGIN_EXCLUDES="${PLUGIN_EXCLUDES:-}"
   HOOK_SPECS="${HOOK_SPECS:-}"
+  HOOK_EXCLUDES="${HOOK_EXCLUDES:-}"
   MCP_SPECS="${MCP_SPECS:-}"
+  MCP_EXCLUDES="${MCP_EXCLUDES:-}"
   AGENT_SPECS="${AGENT_SPECS:-}"
+  AGENT_EXCLUDES="${AGENT_EXCLUDES:-}"
   TRUST_PATHS="${TRUST_PATHS:-}"
   normalize_mode_profile
 
@@ -255,9 +260,9 @@ normalize_config() {
 
 refresh_skill_plan() {
   if [[ "${ENABLE_DEFAULT_SKILLS}" == "1" ]]; then
-    RESOLVED_SKILL_SPECS="$(resolve_installable_capability_items_csv "codex" "skill" "skill-installer" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${SKILL_SPECS}")"
+    RESOLVED_SKILL_SPECS="$(resolve_installable_capability_items_csv "codex" "skill" "skill-installer" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${SKILL_SPECS}" "${SKILL_EXCLUDES}")"
   else
-    RESOLVED_SKILL_SPECS="${SKILL_SPECS}"
+    RESOLVED_SKILL_SPECS="$(csv_subtract "${SKILL_SPECS}" "${SKILL_EXCLUDES}")"
   fi
 }
 
@@ -507,28 +512,45 @@ install_skill_from_github() {
   local temp_dir=""
   local source_dir=""
   local detected_dir=""
+  local status="0"
 
   parsed="$(parse_github_skill_spec "${spec}")" || return 1
   IFS='|' read -r repo ref repo_path <<< "${parsed}"
   remote_url="https://github.com/${repo}.git"
   temp_dir="$(mktemp -d)"
-  trap 'rm -rf "${temp_dir}"' RETURN
 
   if [[ -n "${repo_path}" ]]; then
-    git clone --depth 1 --filter=blob:none --sparse --branch "${ref}" "${remote_url}" "${temp_dir}" >/dev/null 2>&1 || return 1
+    git clone --depth 1 --filter=blob:none --sparse --branch "${ref}" "${remote_url}" "${temp_dir}" >/dev/null 2>&1 || {
+      rm -rf "${temp_dir}"
+      return 1
+    }
     (
       cd "${temp_dir}" &&
       git sparse-checkout set "${repo_path}"
-    ) >/dev/null 2>&1 || return 1
+    ) >/dev/null 2>&1 || {
+      rm -rf "${temp_dir}"
+      return 1
+    }
     source_dir="${temp_dir}/${repo_path}"
   else
-    git clone --depth 1 --branch "${ref}" "${remote_url}" "${temp_dir}" >/dev/null 2>&1 || return 1
+    git clone --depth 1 --branch "${ref}" "${remote_url}" "${temp_dir}" >/dev/null 2>&1 || {
+      rm -rf "${temp_dir}"
+      return 1
+    }
     source_dir="${temp_dir}"
   fi
 
   detected_dir="$(find_single_skill_directory "${source_dir}" || true)"
-  [[ -n "${detected_dir}" ]] || return 1
-  copy_skill_directory "${detected_dir}" "${target_dir}"
+  if [[ -z "${detected_dir}" ]]; then
+    rm -rf "${temp_dir}"
+    return 1
+  fi
+
+  if ! copy_skill_directory "${detected_dir}" "${target_dir}"; then
+    status=1
+  fi
+  rm -rf "${temp_dir}"
+  return "${status}"
 }
 
 install_skill_from_spec() {
@@ -620,6 +642,26 @@ skill_status_summary() {
     "$(skill_status_count "需人工处理")"
 }
 
+skill_status_names_csv() {
+  local target_status="${1:-}"
+
+  [[ -f "${TOOL_SKILL_STATUS_PATH}" ]] || return 0
+
+  awk -F'|' -v target="${target_status}" '
+    NR > 2 && $2 == target {
+      names[count++] = $1
+    }
+    END {
+      for (i = 0; i < count; i++) {
+        if (i > 0) {
+          printf ", "
+        }
+        printf "%s", names[i]
+      }
+    }
+  ' "${TOOL_SKILL_STATUS_PATH}"
+}
+
 sync_skills() {
   local mode="${1:-安装}"
   local spec=""
@@ -702,6 +744,24 @@ codex_current_env_key_value() {
   fi
 
   printf '%s' "${PROVIDER_ENV_KEY:-OPENAI_API_KEY}"
+}
+
+codex_current_base_url_value() {
+  local provider="${1:-}"
+
+  [[ -f "${GLOBAL_CONFIG_PATH}" && -n "${provider}" ]] || return 0
+
+  awk -F'=' -v provider="${provider}" '
+    $0 ~ "^\\[model_providers\\." provider "\\]$" { in_section=1; next }
+    /^\[/ { in_section=0 }
+    in_section && /^base_url[[:space:]]*=/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      gsub(/^"/, "", $2)
+      gsub(/"$/, "", $2)
+      print $2
+      exit
+    }
+  ' "${GLOBAL_CONFIG_PATH}"
 }
 
 codex_auth_state() {
@@ -873,11 +933,11 @@ EOF
 
 render_runtime_manifests() {
   write_pack_manifest "${TOOL_PACKS_MANIFEST_PATH}" "codex" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "Codex skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.agents/skills 目录结构" "codex" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "Codex plugin 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "Codex 当前主要通过 AGENTS / skills / hooks 扩展" "codex" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "Codex hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认初始化 hooks.json 骨架" "codex" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "Codex MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "codex" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "Codex agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.codex/agents 目录结构" "codex" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
+  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "Codex skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.agents/skills 目录结构" "codex" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${SKILL_EXCLUDES}"
+  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "Codex plugin 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "Codex 当前主要通过 AGENTS / skills / hooks 扩展" "codex" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_EXCLUDES}"
+  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "Codex hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认初始化 hooks.json 骨架" "codex" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${HOOK_EXCLUDES}"
+  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "Codex MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "codex" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${MCP_EXCLUDES}"
+  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "Codex agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.codex/agents 目录结构" "codex" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${AGENT_EXCLUDES}"
 }
 
 render_support_notes_if_missing() {
@@ -1014,6 +1074,8 @@ sync_global_config() {
   render_wrapper_script
   render_runtime_manifests
   render_support_notes_if_missing
+  render_shared_global_governance_templates_if_missing "${GLOBAL_CODEX_AGENTS_DIR}"
+  render_shared_global_role_templates_if_missing "${GLOBAL_CODEX_AGENTS_DIR}"
 
   backup_path_if_exists "${GLOBAL_CONFIG_PATH}" "Codex 全局配置"
   install -m 600 "${TOOL_GLOBAL_CONFIG_PATH}" "${GLOBAL_CONFIG_PATH}"
@@ -1072,7 +1134,7 @@ print_summary() {
   log_info "认证方式：${AUTH_METHOD}"
   log_info "模型提供方：${MODEL_PROVIDER}"
   if [[ -n "${API_BASE_URL}" ]]; then
-    log_info "自定义 Base URL：${API_BASE_URL}"
+    log_info "自定义 Base URL：$(sensitive_endpoint_display_value "${API_BASE_URL}")"
   fi
   log_info "官方配置：${GLOBAL_CONFIG_PATH}"
   log_info "工具目录：${TOOL_RUNTIME_ROOT}"
@@ -1142,12 +1204,19 @@ cmd_service_check() {
   local current_auth_mode="未检测到"
   local current_auth_state="未检测到"
   local current_env_key="OPENAI_API_KEY"
+  local current_base_url=""
   local skill_missing_count="0"
   local skill_inactive_count="0"
+  local skill_manual_count="0"
   local skill_summary="未检测到"
+  local skill_missing_names=""
+  local skill_inactive_names=""
+  local skill_manual_names=""
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / plugin 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_SKILL_STATUS_PATH
@@ -1168,6 +1237,8 @@ cmd_service_check() {
   [[ -f "${GLOBAL_AGENTS_DOC_PATH}" ]] && agents_doc_exists="yes"
   [[ -d "${GLOBAL_USER_SKILLS_DIR}" ]] && user_skills_exists="yes"
   [[ -f "${GLOBAL_HOOKS_PATH}" ]] && hooks_exists="yes"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_CODEX_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_CODEX_AGENTS_DIR}")"
 
   if [[ -f "${GLOBAL_CONFIG_PATH}" ]]; then
     current_model="$(awk -F'=' '/^model[[:space:]]*=/{gsub(/[ "]/,"",$2); print $2; exit}' "${GLOBAL_CONFIG_PATH}")"
@@ -1175,6 +1246,7 @@ cmd_service_check() {
     current_auth_mode="$(codex_auth_mode_value)"
     current_env_key="$(codex_current_env_key_value "${current_provider}")"
     [[ -n "${current_env_key}" ]] || current_env_key="OPENAI_API_KEY"
+    current_base_url="$(codex_current_base_url_value "${current_provider}")"
   fi
 
   write_skill_status_snapshot
@@ -1182,10 +1254,19 @@ cmd_service_check() {
   runtime_state="$(codex_runtime_state "${codex_path}" "${config_exists}" "${current_auth_state}")"
   skill_missing_count="$(skill_status_count "缺失")"
   skill_inactive_count="$(skill_status_count "未生效")"
+  skill_manual_count="$(skill_status_count "需人工处理")"
   skill_summary="$(skill_status_summary)"
+  skill_missing_names="$(skill_status_names_csv "缺失")"
+  skill_inactive_names="$(skill_status_names_csv "未生效")"
+  skill_manual_names="$(skill_status_names_csv "需人工处理")"
   readiness_summary="$(codex_best_practice_readiness "${codex_path}" "${config_exists}" "${current_auth_state}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "plugin")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / plugin $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_CODEX_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_CODEX_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${runtime_state}" in
@@ -1206,15 +1287,21 @@ cmd_service_check() {
 
   if [[ -n "${CONFIG_FILE}" ]]; then
     [[ "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "模型与目标不一致")"
-    [[ "$(setting_compare_state "${current_provider}" "${MODEL_PROVIDER}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标不一致")"
+    [[ "$(setting_compare_state "${current_provider}" "${MODEL_PROVIDER}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标配置不一致")"
+    [[ "$(setting_compare_state "${current_base_url}" "${API_BASE_URL}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "Base URL 与目标配置不一致")"
   fi
 
   [[ "${skill_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 skill 缺失 ${skill_missing_count} 项")"
   [[ "${skill_inactive_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 skill 未生效 ${skill_inactive_count} 项")"
+  [[ "${skill_manual_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "存在需人工处理的 skill ${skill_manual_count} 项")"
   [[ "${hooks_exists}" != "yes" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局 hooks 未初始化")"
+  ! managed_global_governance_ready "${GLOBAL_CODEX_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_CODEX_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_report_line "全局配置" "${GLOBAL_CONFIG_PATH} (${config_exists})"
   print_report_line "全局 AGENTS" "${GLOBAL_AGENTS_DOC_PATH} (${agents_doc_exists})"
+  print_report_line "全局治理模板" "${GLOBAL_CODEX_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_CODEX_AGENTS_DIR} (${global_role_state})"
   print_report_line "用户技能目录" "${GLOBAL_USER_SKILLS_DIR} (${user_skills_exists})"
   print_report_line "全局 hooks" "${GLOBAL_HOOKS_PATH} (${hooks_exists})"
   print_report_line "运行状态" "${runtime_state}"
@@ -1223,9 +1310,13 @@ cmd_service_check() {
   print_report_line "最佳实践就绪度" "${readiness_summary}"
   print_report_line "当前模型" "${current_model}"
   print_report_line "当前 provider" "${current_provider}"
+  print_report_line "当前 Base URL" "$(sensitive_endpoint_display_value "${current_base_url:-}" "未声明" "已配置（已脱敏）")"
   print_report_line "认证方式" "${current_auth_mode}"
   print_report_line "认证状态" "${current_auth_state}"
   print_report_line "技能状态" "${skill_summary}"
+  [[ -n "${skill_missing_names}" ]] && print_report_line "缺失 skill" "${skill_missing_names}"
+  [[ -n "${skill_inactive_names}" ]] && print_report_line "未生效 skill" "${skill_inactive_names}"
+  [[ -n "${skill_manual_names}" ]] && print_report_line "人工处理 skill" "${skill_manual_names}"
   print_report_line "工具 env" "${TOOL_ENV_PATH}"
   print_report_line "工具包装命令" "${TOOL_WRAPPER_PATH}"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
@@ -1245,8 +1336,10 @@ cmd_service_check() {
     print_report_line "目标配置文件" "${CONFIG_FILE}"
     print_report_line "目标默认模型" "${DEFAULT_MODEL}"
     print_report_line "目标 provider" "${MODEL_PROVIDER}"
+    print_report_line "目标 Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
     print_report_line "模型比对" "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")"
     print_report_line "Provider 比对" "$(setting_compare_state "${current_provider}" "${MODEL_PROVIDER}")"
+    print_report_line "Base URL 比对" "$(setting_compare_state "${current_base_url}" "${API_BASE_URL}")"
   fi
 
   if command -v codex >/dev/null 2>&1; then
@@ -1267,12 +1360,19 @@ cmd_service_report() {
   local current_auth_mode="未检测到"
   local current_auth_state="未检测到"
   local current_env_key="OPENAI_API_KEY"
+  local current_base_url=""
   local skill_missing_count="0"
   local skill_inactive_count="0"
+  local skill_manual_count="0"
   local skill_summary="未检测到"
+  local skill_missing_names=""
+  local skill_inactive_names=""
+  local skill_manual_names=""
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / plugin 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_SKILL_STATUS_PATH
@@ -1290,18 +1390,30 @@ cmd_service_report() {
     current_auth_mode="$(codex_auth_mode_value)"
     current_env_key="$(codex_current_env_key_value "${current_provider}")"
     [[ -n "${current_env_key}" ]] || current_env_key="OPENAI_API_KEY"
+    current_base_url="$(codex_current_base_url_value "${current_provider}")"
   fi
 
   [[ -f "${GLOBAL_HOOKS_PATH}" ]] && hooks_state="present"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_CODEX_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_CODEX_AGENTS_DIR}")"
   write_skill_status_snapshot
   current_auth_state="$(codex_auth_state "${current_auth_mode}" "${current_env_key}")"
   install_state="$(codex_runtime_state "${codex_path}" "$( [[ "${config_state}" == "present" ]] && printf 'yes' || printf 'no' )" "${current_auth_state}")"
   skill_missing_count="$(skill_status_count "缺失")"
   skill_inactive_count="$(skill_status_count "未生效")"
+  skill_manual_count="$(skill_status_count "需人工处理")"
   skill_summary="$(skill_status_summary)"
+  skill_missing_names="$(skill_status_names_csv "缺失")"
+  skill_inactive_names="$(skill_status_names_csv "未生效")"
+  skill_manual_names="$(skill_status_names_csv "需人工处理")"
   readiness_summary="$(codex_best_practice_readiness "${codex_path}" "$( [[ "${config_state}" == "present" ]] && printf 'yes' || printf 'no' )" "${current_auth_state}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "plugin")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / plugin $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_CODEX_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_CODEX_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${install_state}" in
@@ -1322,12 +1434,16 @@ cmd_service_report() {
 
   if [[ -n "${CONFIG_FILE}" ]]; then
     [[ "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "模型与目标不一致")"
-    [[ "$(setting_compare_state "${current_provider}" "${MODEL_PROVIDER}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标不一致")"
+    [[ "$(setting_compare_state "${current_provider}" "${MODEL_PROVIDER}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "provider 与目标配置不一致")"
+    [[ "$(setting_compare_state "${current_base_url}" "${API_BASE_URL}")" == "不一致" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "Base URL 与目标配置不一致")"
   fi
 
   [[ "${skill_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 skill 缺失 ${skill_missing_count} 项")"
   [[ "${skill_inactive_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 skill 未生效 ${skill_inactive_count} 项")"
+  [[ "${skill_manual_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "存在需人工处理的 skill ${skill_manual_count} 项")"
   [[ "${hooks_state}" != "present" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局 hooks 未初始化")"
+  ! managed_global_governance_ready "${GLOBAL_CODEX_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_CODEX_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_section "Codex 概览"
   print_report_line "安装状态" "${install_state}"
@@ -1336,14 +1452,20 @@ cmd_service_report() {
   print_report_line "Codex 命令" "${codex_path:-未安装}"
   print_report_line "当前模型" "${current_model}"
   print_report_line "当前 provider" "${current_provider}"
+  print_report_line "当前 Base URL" "$(sensitive_endpoint_display_value "${current_base_url:-}" "未声明" "已配置（已脱敏）")"
   print_report_line "认证方式" "${current_auth_mode}"
   print_report_line "认证状态" "${current_auth_state}"
   print_report_line "全局配置" "${GLOBAL_CONFIG_PATH} (${config_state})"
   print_report_line "全局 hooks" "${GLOBAL_HOOKS_PATH} (${hooks_state})"
+  print_report_line "全局治理模板" "${GLOBAL_CODEX_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_CODEX_AGENTS_DIR} (${global_role_state})"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
   print_report_line "最佳实践就绪度" "${readiness_summary}"
   print_report_line "能力包策略" "$(pack_strategy_summary "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}")"
   print_report_line "技能状态" "${skill_summary}"
+  [[ -n "${skill_missing_names}" ]] && print_report_line "缺失 skill" "${skill_missing_names}"
+  [[ -n "${skill_inactive_names}" ]] && print_report_line "未生效 skill" "${skill_inactive_names}"
+  [[ -n "${skill_manual_names}" ]] && print_report_line "人工处理 skill" "${skill_manual_names}"
   print_report_line "核心能力统计" "${capability_stats}"
   print_report_line "能力项统计" "${capability_counts}"
   print_report_line "能力包清单" "${TOOL_PACKS_MANIFEST_PATH} ($(path_state "${TOOL_PACKS_MANIFEST_PATH}"))"
@@ -1353,8 +1475,10 @@ cmd_service_report() {
   if [[ -n "${CONFIG_FILE}" ]]; then
     print_report_line "目标默认模型" "${DEFAULT_MODEL}"
     print_report_line "目标 provider" "${MODEL_PROVIDER}"
+    print_report_line "目标 Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
     print_report_line "模型比对" "$(setting_compare_state "${current_model}" "${DEFAULT_MODEL}")"
     print_report_line "Provider 比对" "$(setting_compare_state "${current_provider}" "${MODEL_PROVIDER}")"
+    print_report_line "Base URL 比对" "$(setting_compare_state "${current_base_url}" "${API_BASE_URL}")"
   fi
 }
 
@@ -1421,7 +1545,7 @@ cmd_config_show() {
       print_report_line "推理强度" "${MODEL_REASONING_EFFORT}"
       print_report_line "认证方式" "${AUTH_METHOD}"
       print_report_line "模型提供方" "${MODEL_PROVIDER}"
-      print_report_line "Base URL" "${API_BASE_URL:-未声明}"
+      print_report_line "Base URL" "$(sensitive_endpoint_display_value "${API_BASE_URL:-}" "未声明" "已声明（已脱敏）")"
       print_report_line "沙箱模式" "${SANDBOX_MODE}"
       print_report_line "审批策略" "${APPROVAL_POLICY}"
       ;;
@@ -1446,10 +1570,15 @@ cmd_config_show() {
       print_report_line "进阶包" "${ENHANCED_PACKS:-<空>}"
       print_report_line "探索包" "${EXPERIMENTAL_PACKS:-<空>}"
       print_report_line "SKILL_SPECS" "${SKILL_SPECS:-<空>}"
+      print_report_line "SKILL_EXCLUDES" "${SKILL_EXCLUDES:-<空>}"
       print_report_line "PLUGIN_SPECS" "${PLUGIN_SPECS:-<空>}"
+      print_report_line "PLUGIN_EXCLUDES" "${PLUGIN_EXCLUDES:-<空>}"
       print_report_line "HOOK_SPECS" "${HOOK_SPECS:-<空>}"
+      print_report_line "HOOK_EXCLUDES" "${HOOK_EXCLUDES:-<空>}"
       print_report_line "MCP_SPECS" "${MCP_SPECS:-<空>}"
+      print_report_line "MCP_EXCLUDES" "${MCP_EXCLUDES:-<空>}"
       print_report_line "AGENT_SPECS" "${AGENT_SPECS:-<空>}"
+      print_report_line "AGENT_EXCLUDES" "${AGENT_EXCLUDES:-<空>}"
       print_report_line "TRUST_PATHS" "${TRUST_PATHS:-<空>}"
       ;;
     *)
@@ -1471,11 +1600,23 @@ cmd_config_init() {
       render_wrapper_script
       render_runtime_manifests
       render_support_notes_if_missing
+      render_shared_global_governance_templates_if_missing "${GLOBAL_CODEX_AGENTS_DIR}"
+      render_shared_global_role_templates_if_missing "${GLOBAL_CODEX_AGENTS_DIR}"
+      if [[ ! -f "${GLOBAL_AGENTS_DOC_PATH}" ]]; then
+        install -m 644 "${TOOL_GLOBAL_AGENTS_PATH}" "${GLOBAL_AGENTS_DOC_PATH}"
+      fi
+      if [[ ! -f "${GLOBAL_HOOKS_PATH}" ]]; then
+        install -m 600 "${TOOL_GLOBAL_HOOKS_PATH}" "${GLOBAL_HOOKS_PATH}"
+      fi
       write_skill_status_snapshot
       log_info "已初始化 Codex 工具目录：${TOOL_RUNTIME_ROOT}"
       log_info "已生成工具目录 config.toml：${TOOL_GLOBAL_CONFIG_PATH}"
       log_info "已准备工具目录 AGENTS 模板：${TOOL_GLOBAL_AGENTS_PATH}"
       log_info "已准备工具目录 hooks 模板：${TOOL_GLOBAL_HOOKS_PATH}"
+      log_info "已准备官方目录治理模板：${GLOBAL_CODEX_AGENTS_DIR}"
+      log_info "已准备官方目录角色模板：${GLOBAL_CODEX_AGENTS_DIR}"
+      log_info "已准备官方目录 AGENTS.md：${GLOBAL_AGENTS_DOC_PATH}"
+      log_info "已准备官方目录 hooks.json：${GLOBAL_HOOKS_PATH}"
       log_info "已生成工具目录 provider.env：${TOOL_ENV_PATH}"
       log_info "已生成工具目录包装命令：${TOOL_WRAPPER_PATH}"
       log_info "已生成初始化清单：${TOOL_PACKS_MANIFEST_PATH}、${TOOL_SKILLS_MANIFEST_PATH}、${TOOL_PLUGINS_MANIFEST_PATH}、${TOOL_HOOKS_MANIFEST_PATH}、${TOOL_MCP_MANIFEST_PATH}、${TOOL_AGENTS_MANIFEST_PATH}"

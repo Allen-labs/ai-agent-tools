@@ -227,7 +227,7 @@ gemini_extension_install_source_from_spec() {
 
   repo="$(gemini_extension_repo_from_spec "${spec}" || true)"
   if [[ -n "${repo}" ]]; then
-    printf '%s' "${repo}"
+    printf 'https://github.com/%s' "${repo}"
     return 0
   fi
 
@@ -292,6 +292,58 @@ gemini_extension_source_from_spec() {
   return 1
 }
 
+gemini_extension_installed_dir_from_spec() {
+  local spec="${1:-}"
+  local expected_name=""
+  local source=""
+  local install_source=""
+  local manifest_name=""
+  local dir=""
+  local install_meta=""
+  local -a extension_dirs=()
+
+  [[ -d "${GLOBAL_EXTENSIONS_DIR}" ]] || return 1
+
+  expected_name="$(gemini_extension_name_from_spec "${spec}")"
+  source="$(gemini_extension_source_from_spec "${spec}" || true)"
+  install_source="$(gemini_extension_install_source_from_spec "${spec}" || true)"
+
+  shopt -s nullglob
+  extension_dirs=("${GLOBAL_EXTENSIONS_DIR}"/*)
+  shopt -u nullglob
+
+  for dir in "${extension_dirs[@]}"; do
+    [[ -d "${dir}" ]] || continue
+    install_meta="${dir}/.gemini-extension-install.json"
+
+    if [[ -f "${install_meta}" ]]; then
+      if [[ -n "${install_source}" ]] && grep -F "\"source\": \"${install_source}\"" "${install_meta}" >/dev/null 2>&1; then
+        printf '%s' "${dir}"
+        return 0
+      fi
+      if [[ -n "${source}" ]] && grep -F "\"source\": \"${source}\"" "${install_meta}" >/dev/null 2>&1; then
+        printf '%s' "${dir}"
+        return 0
+      fi
+    fi
+
+    if [[ -f "${dir}/gemini-extension.json" ]]; then
+      manifest_name="$(extract_json_string_value "name" "${dir}/gemini-extension.json")"
+      if [[ -n "${manifest_name}" && "${manifest_name}" == "${expected_name}" ]]; then
+        printf '%s' "${dir}"
+        return 0
+      fi
+    fi
+
+    if [[ "$(basename "${dir}")" == "${expected_name}" ]]; then
+      printf '%s' "${dir}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 normalize_config() {
   INSTALL_METHOD="${INSTALL_METHOD:-npm}"
   GEMINI_PACKAGE="${GEMINI_PACKAGE:-@google/gemini-cli@latest}"
@@ -318,14 +370,21 @@ normalize_config() {
   EXPERIMENTAL_PACKS="${EXPERIMENTAL_PACKS:-experimental-bleeding-edge}"
   ENABLE_EXPERIMENTAL_PACKS="${ENABLE_EXPERIMENTAL_PACKS:-0}"
   SKILL_SPECS="${SKILL_SPECS:-}"
+  SKILL_EXCLUDES="${SKILL_EXCLUDES:-}"
   PLUGIN_SPECS="${PLUGIN_SPECS:-}"
+  PLUGIN_EXCLUDES="${PLUGIN_EXCLUDES:-}"
   HOOK_SPECS="${HOOK_SPECS:-}"
+  HOOK_EXCLUDES="${HOOK_EXCLUDES:-}"
   MCP_SPECS="${MCP_SPECS:-}"
+  MCP_EXCLUDES="${MCP_EXCLUDES:-}"
   AGENT_SPECS="${AGENT_SPECS:-}"
+  AGENT_EXCLUDES="${AGENT_EXCLUDES:-}"
   normalize_mode_profile
   GLOBAL_GEMINI_DIR="${GLOBAL_GEMINI_DIR:-/root/.gemini}"
   GLOBAL_SETTINGS_PATH="${GLOBAL_SETTINGS_PATH:-${GLOBAL_GEMINI_DIR}/settings.json}"
   GLOBAL_ENV_PATH="${GLOBAL_ENV_PATH:-${GLOBAL_GEMINI_DIR}/.env}"
+  GLOBAL_CREDENTIALS_PATH="${GLOBAL_CREDENTIALS_PATH:-${GLOBAL_GEMINI_DIR}/gemini-credentials.json}"
+  GLOBAL_INSTALLATION_ID_PATH="${GLOBAL_INSTALLATION_ID_PATH:-${GLOBAL_GEMINI_DIR}/installation_id}"
   GLOBAL_MEMORY_PATH="${GLOBAL_MEMORY_PATH:-${GLOBAL_GEMINI_DIR}/GEMINI.md}"
   GLOBAL_SKILLS_DIR="${GLOBAL_SKILLS_DIR:-${GLOBAL_GEMINI_DIR}/skills}"
   GLOBAL_EXTENSIONS_DIR="${GLOBAL_EXTENSIONS_DIR:-${GLOBAL_GEMINI_DIR}/extensions}"
@@ -373,9 +432,9 @@ normalize_config() {
 
 refresh_extension_plan() {
   if [[ "${ENABLE_DEFAULT_PLUGINS}" == "1" ]]; then
-    RESOLVED_EXTENSION_SPECS="$(resolve_installable_capability_items_csv "gemini-cli" "plugin" "extensions-install" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}")"
+    RESOLVED_EXTENSION_SPECS="$(resolve_installable_capability_items_csv "gemini-cli" "plugin" "extensions-install" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
   else
-    RESOLVED_EXTENSION_SPECS="${PLUGIN_SPECS}"
+    RESOLVED_EXTENSION_SPECS="$(csv_subtract "${PLUGIN_SPECS}" "${PLUGIN_EXCLUDES}")"
   fi
 }
 
@@ -539,7 +598,10 @@ write_extension_status_snapshot() {
     name="$(gemini_extension_name_from_spec "${spec}")"
     source="$(gemini_extension_source_from_spec "${spec}" || true)"
     install_source="$(gemini_extension_install_source_from_spec "${spec}" || true)"
-    extension_dir="${GLOBAL_EXTENSIONS_DIR}/${name}"
+    extension_dir="$(gemini_extension_installed_dir_from_spec "${spec}" || true)"
+    if [[ -z "${extension_dir}" ]]; then
+      extension_dir="${GLOBAL_EXTENSIONS_DIR}/${name}"
+    fi
     manifest_path="${extension_dir}/gemini-extension.json"
 
     if [[ -f "${manifest_path}" ]]; then
@@ -579,12 +641,35 @@ extension_status_summary() {
     "$(extension_status_count "需人工处理")"
 }
 
+extension_status_names_csv() {
+  local target_status="${1:-}"
+
+  [[ -f "${TOOL_PLUGIN_STATUS_PATH}" ]] || return 0
+
+  awk -F'|' -v target="${target_status}" '
+    NR > 2 && $2 == target {
+      names[count++] = $1
+    }
+    END {
+      for (i = 0; i < count; i++) {
+        if (i > 0) {
+          printf ", "
+        }
+        printf "%s", names[i]
+      }
+    }
+  ' "${TOOL_PLUGIN_STATUS_PATH}"
+}
+
 sync_extensions() {
   local mode="${1:-安装}"
   local spec=""
   local source=""
   local install_source=""
   local name=""
+  local installed_dir=""
+  local installed_name=""
+  local -a install_args=()
   local -a extension_specs=()
 
   ensure_runtime_layout
@@ -608,27 +693,35 @@ sync_extensions() {
     name="$(gemini_extension_name_from_spec "${spec}")"
     source="$(gemini_extension_source_from_spec "${spec}" || true)"
     install_source="$(gemini_extension_install_source_from_spec "${spec}" || true)"
+    installed_dir="$(gemini_extension_installed_dir_from_spec "${spec}" || true)"
+    installed_name=""
+    [[ -n "${installed_dir}" ]] && installed_name="$(basename "${installed_dir}")"
 
     if [[ -z "${install_source}" ]]; then
       log_warn "extension 缺少可安装来源，跳过：${spec}"
       continue
     fi
 
-    if [[ "${mode}" == "更新" && -f "${GLOBAL_EXTENSIONS_DIR}/${name}/gemini-extension.json" ]]; then
-      if gemini extensions update "${name}"; then
-        log_info "已更新 extension：${name}"
+    if [[ "${mode}" == "更新" && -n "${installed_dir}" && -f "${installed_dir}/gemini-extension.json" ]]; then
+      if gemini extensions update "${installed_name:-${name}}"; then
+        log_info "已更新 extension：${installed_name:-${name}}"
       else
-        log_warn "更新 extension 失败，保留现状：${name}"
+        log_warn "更新 extension 失败，保留现状：${installed_name:-${name}}"
       fi
       continue
     fi
 
-    if [[ -f "${GLOBAL_EXTENSIONS_DIR}/${name}/gemini-extension.json" ]]; then
-      log_info "extension 已存在，跳过：${name}"
+    if [[ -n "${installed_dir}" && -f "${installed_dir}/gemini-extension.json" ]]; then
+      log_info "extension 已存在，跳过：${installed_name:-${name}}"
       continue
     fi
 
-    if gemini extensions install "${install_source}" --auto-update --consent; then
+    install_args=("${install_source}" "--consent")
+    if [[ ! "${install_source}" =~ ^/ && ! "${install_source}" =~ ^\./ && ! "${install_source}" =~ ^\.\./ ]]; then
+      install_args+=("--auto-update")
+    fi
+
+    if gemini extensions install "${install_args[@]}"; then
       log_info "已安装 extension：${name}"
     else
       log_warn "安装 extension 失败：${name}"
@@ -636,6 +729,26 @@ sync_extensions() {
   done
 
   write_extension_status_snapshot
+}
+
+gemini_current_auth_mode() {
+  if [[ -f "${GLOBAL_ENV_PATH}" ]]; then
+    if grep -Eq '^(GEMINI_API_KEY|GOOGLE_API_KEY)=' "${GLOBAL_ENV_PATH}"; then
+      printf 'api-key'
+      return 0
+    fi
+    if grep -Eq '^GOOGLE_GENAI_USE_VERTEXAI=(1|true|TRUE|yes|YES|on|ON)$' "${GLOBAL_ENV_PATH}"; then
+      printf 'vertex-ai'
+      return 0
+    fi
+  fi
+
+  if [[ -s "${GLOBAL_CREDENTIALS_PATH}" ]]; then
+    printf 'google-login'
+    return 0
+  fi
+
+  printf '未检测到'
 }
 
 gemini_runtime_state() {
@@ -693,11 +806,11 @@ gemini_best_practice_readiness() {
 
 render_runtime_manifests() {
   write_pack_manifest "${TOOL_PACKS_MANIFEST_PATH}" "gemini-cli" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "Gemini CLI skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.gemini/skills 目录结构" "gemini-cli" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "Gemini CLI extension 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "默认仅初始化 ~/.gemini/extensions 目录结构" "gemini-cli" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "Gemini CLI hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认依赖 settings.json 中的 hooksConfig 骨架" "gemini-cli" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "Gemini CLI MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "gemini-cli" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
-  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "Gemini CLI agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.gemini/agents 目录结构" "gemini-cli" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}"
+  write_capability_manifest "${TOOL_SKILLS_MANIFEST_PATH}" "Gemini CLI skill 初始化清单" "${ENABLE_DEFAULT_SKILLS}" "${SKILL_SPECS}" "默认仅初始化 ~/.gemini/skills 目录结构" "gemini-cli" "skill" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${SKILL_EXCLUDES}"
+  write_capability_manifest "${TOOL_PLUGINS_MANIFEST_PATH}" "Gemini CLI extension 初始化清单" "${ENABLE_DEFAULT_PLUGINS}" "${PLUGIN_SPECS}" "默认仅初始化 ~/.gemini/extensions 目录结构" "gemini-cli" "plugin" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${PLUGIN_EXCLUDES}"
+  write_capability_manifest "${TOOL_HOOKS_MANIFEST_PATH}" "Gemini CLI hook 初始化清单" "${ENABLE_DEFAULT_HOOKS}" "${HOOK_SPECS}" "默认依赖 settings.json 中的 hooksConfig 骨架" "gemini-cli" "hook" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${HOOK_EXCLUDES}"
+  write_capability_manifest "${TOOL_MCP_MANIFEST_PATH}" "Gemini CLI MCP 初始化清单" "${ENABLE_DEFAULT_MCP}" "${MCP_SPECS}" "默认保留为空，按实际服务器再接入" "gemini-cli" "mcp" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${MCP_EXCLUDES}"
+  write_capability_manifest "${TOOL_AGENTS_MANIFEST_PATH}" "Gemini CLI agent 初始化清单" "${ENABLE_DEFAULT_AGENTS}" "${AGENT_SPECS}" "默认初始化 ~/.gemini/agents 目录结构" "gemini-cli" "agent" "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}" "${AGENT_EXCLUDES}"
 }
 
 render_support_notes_if_missing() {
@@ -843,6 +956,8 @@ sync_global_config() {
   render_memory_template_if_missing
   render_runtime_manifests
   render_support_notes_if_missing
+  render_shared_global_governance_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+  render_shared_global_role_templates_if_missing "${GLOBAL_AGENTS_DIR}"
 
   backup_path_if_exists "${GLOBAL_SETTINGS_PATH}" "Gemini settings.json"
   install -m 600 "${TOOL_SETTINGS_PATH}" "${GLOBAL_SETTINGS_PATH}"
@@ -851,6 +966,15 @@ sync_global_config() {
   backup_path_if_exists "${GLOBAL_ENV_PATH}" "Gemini .env"
   install -m 600 "${TOOL_ENV_PATH}" "${GLOBAL_ENV_PATH}"
   log_info "已同步全局 .env：${GLOBAL_ENV_PATH}"
+
+  if [[ ! -f "${GLOBAL_GEMINI_DIR}/projects.json" ]]; then
+    cat > "${GLOBAL_GEMINI_DIR}/projects.json" <<'EOF'
+{
+  "projects": {}
+}
+EOF
+    log_info "已初始化全局 projects.json：${GLOBAL_GEMINI_DIR}/projects.json"
+  fi
 
   if [[ ! -f "${GLOBAL_MEMORY_PATH}" ]]; then
     install -m 644 "${TOOL_MEMORY_PATH}" "${GLOBAL_MEMORY_PATH}"
@@ -939,10 +1063,16 @@ cmd_service_check() {
   local env_state="no"
   local extension_missing_count="0"
   local extension_inactive_count="0"
+  local extension_manual_count="0"
   local extension_summary="未检测到"
+  local extension_missing_names=""
+  local extension_inactive_names=""
+  local extension_manual_names=""
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / extension 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_PLUGIN_STATUS_PATH
@@ -967,6 +1097,8 @@ cmd_service_check() {
   [[ -d "${GLOBAL_EXTENSIONS_DIR}" ]] && extensions_exists="yes"
   [[ -d "${GLOBAL_POLICIES_DIR}" ]] && policies_exists="yes"
   [[ -d "${GLOBAL_AGENTS_DIR}" ]] && agents_exists="yes"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_AGENTS_DIR}")"
 
   if [[ -f "${GLOBAL_SETTINGS_PATH}" ]]; then
     current_model="$(extract_json_string_value "name" "${GLOBAL_SETTINGS_PATH}")"
@@ -975,13 +1107,7 @@ cmd_service_check() {
     [[ -n "${current_approval_mode}" ]] || current_approval_mode="未检测到"
   fi
 
-  if [[ -f "${GLOBAL_ENV_PATH}" ]]; then
-    if grep -Eq '^(GEMINI_API_KEY|GOOGLE_API_KEY)=' "${GLOBAL_ENV_PATH}"; then
-      current_auth="api-key"
-    elif grep -Eq '^GOOGLE_GENAI_USE_VERTEXAI=(1|true|TRUE|yes|YES|on|ON)$' "${GLOBAL_ENV_PATH}"; then
-      current_auth="vertex-ai"
-    fi
-  fi
+  current_auth="$(gemini_current_auth_mode)"
 
   print_report_line "settings.json" "${GLOBAL_SETTINGS_PATH} (${settings_exists})"
   print_report_line ".env" "${GLOBAL_ENV_PATH} (${env_exists})"
@@ -992,10 +1118,19 @@ cmd_service_check() {
   runtime_state="$(gemini_runtime_state "${gemini_path}" "${settings_exists}" "${env_exists}" "${current_auth}")"
   extension_missing_count="$(extension_status_count "缺失")"
   extension_inactive_count="$(extension_status_count "未生效")"
+  extension_manual_count="$(extension_status_count "需人工处理")"
   extension_summary="$(extension_status_summary)"
+  extension_missing_names="$(extension_status_names_csv "缺失")"
+  extension_inactive_names="$(extension_status_names_csv "未生效")"
+  extension_manual_names="$(extension_status_names_csv "需人工处理")"
   readiness_summary="$(gemini_best_practice_readiness "${gemini_path}" "${settings_exists}" "${env_exists}" "${current_auth}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "extension")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / extension $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${runtime_state}" in
@@ -1020,6 +1155,9 @@ cmd_service_check() {
 
   [[ "${extension_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 extension 缺失 ${extension_missing_count} 项")"
   [[ "${extension_inactive_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 extension 未生效 ${extension_inactive_count} 项")"
+  [[ "${extension_manual_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "存在需人工处理的 extension ${extension_manual_count} 项")"
+  ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_report_line "当前状态" "${runtime_state}"
   print_report_line "建议动作" "$(recommended_service_action "gemini-cli" "${runtime_state}" "${CONFIG_FILE:-}")"
@@ -1028,8 +1166,13 @@ cmd_service_check() {
   print_report_line "技能目录" "${GLOBAL_SKILLS_DIR} (${skills_exists})"
   print_report_line "扩展目录" "${GLOBAL_EXTENSIONS_DIR} (${extensions_exists})"
   print_report_line "扩展状态" "${extension_summary}"
+  [[ -n "${extension_missing_names}" ]] && print_report_line "缺失 extension" "${extension_missing_names}"
+  [[ -n "${extension_inactive_names}" ]] && print_report_line "未生效 extension" "${extension_inactive_names}"
+  [[ -n "${extension_manual_names}" ]] && print_report_line "人工处理 extension" "${extension_manual_names}"
   print_report_line "策略目录" "${GLOBAL_POLICIES_DIR} (${policies_exists})"
   print_report_line "Agents 目录" "${GLOBAL_AGENTS_DIR} (${agents_exists})"
+  print_report_line "全局治理模板" "${GLOBAL_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_AGENTS_DIR} (${global_role_state})"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
   print_report_line "备份目录" "${BACKUP_ROOT}"
   print_report_line "能力包策略" "$(pack_strategy_summary "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}")"
@@ -1062,10 +1205,16 @@ cmd_service_report() {
   local env_state="no"
   local extension_missing_count="0"
   local extension_inactive_count="0"
+  local extension_manual_count="0"
   local extension_summary="未检测到"
+  local extension_missing_names=""
+  local extension_inactive_names=""
+  local extension_manual_names=""
   local readiness_summary="未检测到"
   local capability_stats="未检测到"
   local capability_counts="skill 0 / extension 0 / hook 0 / mcp 0 / agent 0"
+  local global_governance_state="0/4"
+  local global_role_state="0/4"
 
   load_config_if_present
   readonly_manifest_scope_begin TOOL_PLUGIN_STATUS_PATH
@@ -1083,21 +1232,26 @@ cmd_service_report() {
     [[ -n "${current_model}" ]] || current_model="未检测到"
   fi
 
-  if [[ -f "${GLOBAL_ENV_PATH}" ]]; then
-    if grep -Eq '^(GEMINI_API_KEY|GOOGLE_API_KEY)=' "${GLOBAL_ENV_PATH}"; then
-      current_auth="api-key"
-    elif grep -Eq '^GOOGLE_GENAI_USE_VERTEXAI=(1|true|TRUE|yes|YES|on|ON)$' "${GLOBAL_ENV_PATH}"; then
-      current_auth="vertex-ai"
-    fi
-  fi
+  current_auth="$(gemini_current_auth_mode)"
+  global_governance_state="$(managed_global_governance_state "${GLOBAL_AGENTS_DIR}")"
+  global_role_state="$(managed_global_role_state "${GLOBAL_AGENTS_DIR}")"
 
   install_state="$(gemini_runtime_state "${gemini_path}" "$([[ "${settings_state}" == "present" ]] && printf yes || printf no)" "$([[ -f "${GLOBAL_ENV_PATH}" ]] && printf yes || printf no)" "${current_auth}")"
   extension_missing_count="$(extension_status_count "缺失")"
   extension_inactive_count="$(extension_status_count "未生效")"
+  extension_manual_count="$(extension_status_count "需人工处理")"
   extension_summary="$(extension_status_summary)"
+  extension_missing_names="$(extension_status_names_csv "缺失")"
+  extension_inactive_names="$(extension_status_names_csv "未生效")"
+  extension_manual_names="$(extension_status_names_csv "需人工处理")"
   readiness_summary="$(gemini_best_practice_readiness "${gemini_path}" "$([[ "${settings_state}" == "present" ]] && printf yes || printf no)" "$([[ -f "${GLOBAL_ENV_PATH}" ]] && printf yes || printf no)" "${current_auth}")"
   capability_stats="$(capability_stats_summary "${TOOL_SKILLS_MANIFEST_PATH}" "${TOOL_PLUGINS_MANIFEST_PATH}" "${TOOL_HOOKS_MANIFEST_PATH}" "${TOOL_MCP_MANIFEST_PATH}" "${TOOL_AGENTS_MANIFEST_PATH}" "extension")"
   capability_counts="skill $(manifest_item_count "${TOOL_SKILLS_MANIFEST_PATH}") / extension $(manifest_item_count "${TOOL_PLUGINS_MANIFEST_PATH}") / hook $(manifest_item_count "${TOOL_HOOKS_MANIFEST_PATH}") / mcp $(manifest_item_count "${TOOL_MCP_MANIFEST_PATH}") / agent $(manifest_item_count "${TOOL_AGENTS_MANIFEST_PATH}")"
+  if [[ "${readiness_summary}" == "推荐基线已就绪" || "${readiness_summary}" == "增强基线已启用" ]]; then
+    if ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" || ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}"; then
+      readiness_summary="推荐基线待补齐"
+    fi
+  fi
   readonly_manifest_scope_end
 
   case "${install_state}" in
@@ -1122,6 +1276,9 @@ cmd_service_report() {
 
   [[ "${extension_missing_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 extension 缺失 ${extension_missing_count} 项")"
   [[ "${extension_inactive_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "默认 extension 未生效 ${extension_inactive_count} 项")"
+  [[ "${extension_manual_count}" != "0" ]] && not_ready_reason="$(append_reason_text "${not_ready_reason}" "存在需人工处理的 extension ${extension_manual_count} 项")"
+  ! managed_global_governance_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局治理模板未补齐")"
+  ! managed_global_role_ready "${GLOBAL_AGENTS_DIR}" && not_ready_reason="$(append_reason_text "${not_ready_reason}" "全局角色模板未补齐")"
 
   print_section "Gemini CLI 概览"
   print_report_line "安装状态" "${install_state}"
@@ -1130,11 +1287,16 @@ cmd_service_report() {
   print_report_line "Gemini 命令" "${gemini_path:-未安装}"
   print_report_line "当前模型" "${current_model}"
   print_report_line "认证模式" "${current_auth}"
+  print_report_line "全局治理模板" "${GLOBAL_AGENTS_DIR} (${global_governance_state})"
+  print_report_line "全局角色模板" "${GLOBAL_AGENTS_DIR} (${global_role_state})"
   print_report_line "settings.json" "${GLOBAL_SETTINGS_PATH} (${settings_state})"
   print_report_line "工具目录" "${TOOL_RUNTIME_ROOT}"
   print_report_line "最佳实践就绪度" "${readiness_summary}"
   print_report_line "能力包策略" "$(pack_strategy_summary "${COMMON_DEFAULT_PACKS}" "${TOOL_DEFAULT_PACKS}" "${ENHANCED_PACKS}" "${ENABLE_ENHANCED_PACKS}" "${EXPERIMENTAL_PACKS}" "${ENABLE_EXPERIMENTAL_PACKS}")"
   print_report_line "扩展状态" "${extension_summary}"
+  [[ -n "${extension_missing_names}" ]] && print_report_line "缺失 extension" "${extension_missing_names}"
+  [[ -n "${extension_inactive_names}" ]] && print_report_line "未生效 extension" "${extension_inactive_names}"
+  [[ -n "${extension_manual_names}" ]] && print_report_line "人工处理 extension" "${extension_manual_names}"
   print_report_line "核心能力统计" "${capability_stats}"
   print_report_line "能力项统计" "${capability_counts}"
   print_report_line "能力包清单" "${TOOL_PACKS_MANIFEST_PATH} ($(path_state "${TOOL_PACKS_MANIFEST_PATH}"))"
@@ -1189,10 +1351,15 @@ cmd_config_show() {
       print_report_line "进阶包" "${ENHANCED_PACKS:-<空>}"
       print_report_line "探索包" "${EXPERIMENTAL_PACKS:-<空>}"
       print_report_line "SKILL_SPECS" "${SKILL_SPECS:-<空>}"
+      print_report_line "SKILL_EXCLUDES" "${SKILL_EXCLUDES:-<空>}"
       print_report_line "PLUGIN_SPECS" "${PLUGIN_SPECS:-<空>}"
+      print_report_line "PLUGIN_EXCLUDES" "${PLUGIN_EXCLUDES:-<空>}"
       print_report_line "HOOK_SPECS" "${HOOK_SPECS:-<空>}"
+      print_report_line "HOOK_EXCLUDES" "${HOOK_EXCLUDES:-<空>}"
       print_report_line "MCP_SPECS" "${MCP_SPECS:-<空>}"
+      print_report_line "MCP_EXCLUDES" "${MCP_EXCLUDES:-<空>}"
       print_report_line "AGENT_SPECS" "${AGENT_SPECS:-<空>}"
+      print_report_line "AGENT_EXCLUDES" "${AGENT_EXCLUDES:-<空>}"
       ;;
     *)
       die "config show 仅支持 --section summary|paths|extensions，收到：${section}"
@@ -1212,10 +1379,18 @@ cmd_config_init() {
       render_memory_template_if_missing
       render_runtime_manifests
       render_support_notes_if_missing
+      render_shared_global_governance_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+      render_shared_global_role_templates_if_missing "${GLOBAL_AGENTS_DIR}"
+      if [[ ! -f "${GLOBAL_MEMORY_PATH}" ]]; then
+        install -m 644 "${TOOL_MEMORY_PATH}" "${GLOBAL_MEMORY_PATH}"
+      fi
       log_info "已初始化 Gemini CLI 工具目录：${TOOL_RUNTIME_ROOT}"
       log_info "已生成工具目录 settings.json：${TOOL_SETTINGS_PATH}"
       log_info "已生成工具目录 .env：${TOOL_ENV_PATH}"
       log_info "已准备工具目录 GEMINI.md 模板：${TOOL_MEMORY_PATH}"
+      log_info "已准备官方目录治理模板：${GLOBAL_AGENTS_DIR}"
+      log_info "已准备官方目录角色模板：${GLOBAL_AGENTS_DIR}"
+      log_info "已准备官方目录 GEMINI.md：${GLOBAL_MEMORY_PATH}"
       log_info "已生成初始化清单：${TOOL_PACKS_MANIFEST_PATH}、${TOOL_SKILLS_MANIFEST_PATH}、${TOOL_PLUGINS_MANIFEST_PATH}、${TOOL_HOOKS_MANIFEST_PATH}、${TOOL_MCP_MANIFEST_PATH}、${TOOL_AGENTS_MANIFEST_PATH}"
       ;;
     project)

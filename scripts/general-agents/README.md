@@ -35,3 +35,6 @@ bash manage.sh service check --tool-name openclaw --config ./general-agents/open
 
 - 日常优先走顶层 `scripts/manage.sh`
 - 如需单独调试，也可以直接进入工具子目录执行
+- OpenClaw 现在会把长期治理文件写回 `~/.openclaw`
+- 涉及 Base URL、Token、Secret 这类敏感项的帮助和报告默认只显示状态，不直接回显真实值
+- `scenario` 交互阶段为便于确认，会明文展示 URL / 地址类当前值；Key / Token / Secret 继续隐藏输入

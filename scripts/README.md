@@ -32,13 +32,17 @@
 - `TASKS.md` 负责讲当前完成了什么、下一步做什么、优先级是什么
 - 后续默认能力不会只靠 `skill / plugin` 定义，还会覆盖 `hook / MCP / agent / memory / policy`
 - `config init --scope project` 已生成共享的 `project-context / architecture / workflow / checklist`，并内置角色分工、持续记忆、测试与发布引导，以及默认角色模板
+- coding tools 现在会在官方 `agents/` 目录自动补齐全局治理模板与角色模板，OpenClaw 会在 `~/.openclaw` 自动补齐治理文件
 - `tool review` 已覆盖全局初始化回归、项目初始化回归、默认报告回归和旧概念残留拦截
 - 顶层帮助与子工具帮助已改成彩色分层展示，优先突出主命令、配置起步模板、默认记忆、典型场景和最小必要信息
 - 顶层帮助现在会同时展示：接口全览、场景执行、工具支持能力和按需能力
 - `scenario` 现在是步骤式全交互向导：选工具、选场景、补配置、看计划、再执行
 - `scenario` 会自动补齐关键配置、必要时创建 `local.conf`，再给出执行计划并确认执行
+- `scenario` 只负责交互采集、场景编排和执行正式命令；配置写入底层能力统一收敛到 `config set`
 - `scenario` 对 OpenClaw 额外提供“部署形态”引导：公网域名、公网 IP、Tailscale 私网、Tailscale 公网入口
-- `scenario` 默认沿用配置里的推荐模型和模式，只在用户明确要改时展开进阶项
+- `scenario` 默认沿用配置里的推荐模型和模式，只在用户明确要改时展开进阶项；但认证、provider、访问模式这类真正影响接入的关键项会主动确认
+- `scenario` 对 coding tools 额外提供“主能力定制”口子：会先展示当前模式下要安装的 skill / plugin / extension，再决定是否增加或排除个别项
+- `scenario` 已补返回链路：菜单可用 `0/back` 返回、`q` 退出；关键配置阶段在后续问题输入 `back` 会回到本阶段开头
 
 ## 总入口
 
@@ -50,6 +54,7 @@ bash manage.sh scenario
 bash manage.sh scenario --tool-name codex --scene install
 bash manage.sh guide start --tool-name codex
 bash manage.sh service install --tool-name codex --config ./coding-agents/codex/local.conf
+bash manage.sh config set --config ./coding-agents/codex/local.conf --set MODE=advanced
 bash manage.sh config init --tool-name codex --config ./coding-agents/codex/local.conf --scope project --path /workspace/path
 bash manage.sh service check --tool-name codex --config ./coding-agents/codex/local.conf
 bash manage.sh tool review
@@ -61,6 +66,7 @@ bash manage.sh tool review
 - 需要交互式引导时，优先用 `scenario`
 - `scenario` 会按步骤逐步引导，不要求用户先理解内部配置名
 - `scenario` 会先补齐关键配置，再串起安装、增强、迁移、项目初始化或状态检查
+- `config set` 是顶层正式配置写入命令，`scenario` 只复用它的底层能力，不单独维护一套配置写入模型
 - Coding Agents 默认三命令：`service install`、`config init`、`service check`
 - `service install` 负责安装并完成全局最优初始化
 - `config init` 负责初始化项目目录骨架、记忆文档、角色分工、测试与发布说明
@@ -69,11 +75,38 @@ bash manage.sh tool review
 - `service check / report` 会展示“最佳实践就绪度”，直接看当前是否达到推荐基线
 - `service check / report` 在检测到“未安装”或“未生效”时，会直接给出下一条建议动作
 - `service check / report` 还会补“未就绪原因”，直接指出缺的是安装、认证、配置还是默认能力项
+- `service check / report` 对缺失、未生效、待生效、需人工处理的能力项，除了数量还会直接列出名称
 - `service check / report` 会显示当前能力包策略，直接看当前 `MODE`、默认包、进阶包、探索包是否生效
 - `service check / report` 会同时显示“核心能力统计”和“能力项统计”
+- 所有帮助、报告、配置摘要默认对 Base URL、Key、Token、Secret 这类敏感项做脱敏展示，只显示状态或示例
+- `scenario` 属于当前会话交互，URL / 地址类字段支持当场核对；如果配置里已有旧值，向导默认不直接回显；Key / Token / Secret 继续隐藏输入，后续摘要与报告仍脱敏
 - “核心能力统计”优先按用户体感看 `skill + plugin/extension + 核心 MCP`
 - “能力项统计”是完整口径，会把 `hook / 全量 MCP / agent` 一起算进去
 - OpenClaw 保留它自己的主链路：`service install`、`service configure`、`service report`、`service check`
+
+## 最佳实践包含什么
+
+- 工具安装、更新、卸载与接管
+- 官方目录的最优初始化和配置重放
+- 官方目录里的长期治理文件、角色模板和记忆回写规则
+- 全局配置与项目级模板双层管理
+- `standard / advanced / exploration` 三档模式
+- 默认能力包覆盖 `skill / plugin / extension / hook / MCP / agent / memory / policy`
+- `scenario` 场景化交互，优先补关键接入项，再给出执行计划
+- `service report / check` 的就绪度、差异项、建议动作和能力统计
+- 统一的备份、manifest、状态快照、中文日志和彩色帮助
+
+## 当前已经做到什么
+
+- 下面这一节默认说的是“仓库脚本能力与目录治理层”；不等于这台机器上所有工具都已完成实机安装与验证
+- OpenClaw、Claude Code、Codex、Gemini CLI、OpenCode 已全部接入统一入口
+- coding tools 已支持 `service install / configure / update / uninstall / report / check / config init`
+- OpenClaw 已支持安装、配置重放、状态检查、飞书接入、访问模式收敛与长期记忆初始化
+- coding tools 已支持模式化能力包、项目模板、manifest、状态快照与最佳实践就绪度
+- coding tools 已把全局治理模板和全局角色模板写回官方 `agents/` 目录，并纳入 `service report / check`
+- OpenClaw 已把治理文件写回 `~/.openclaw`，并纳入 `service report / check`
+- `scenario` 已支持返回上一层、退出、关键配置补齐、执行前确认
+- `scenario` 已支持对 coding tools 的主安装能力做高阶定制
 
 ## 三类典型场景
 
@@ -92,12 +125,17 @@ bash manage.sh scenario --tool-name codex --scene project --path /workspace/proj
 
 说明：
 
-- `scenario` 现在是“步骤式全交互”向导，会先后引导：工具、场景、配置文件、关键配置、项目模板、执行确认
+- `scenario` 现在是“步骤式全交互”向导，会先后引导：工具、场景、配置文件、关键配置、能力定制、项目模板、执行确认
 - `scenario` 会自动检查配置文件，不存在时会从 `conf.example` 创建
-- 常见安装和增强场景默认沿用配置里的推荐模型、模式和常规 provider，只补认证和必填项
+- 常见安装和增强场景会优先沿用配置里的推荐模型和模式；认证、provider、访问模式这类关键接入项仍会主动确认
 - `install / enhance / migrate` 会补齐真正会卡住场景的关键项，例如认证、模型、provider、访问模式、飞书、长期记忆
+- coding tools 在关键配置后，会先展示当前模式下要安装的主能力，再决定是否进入高阶定制
+- 高阶定制会把“当前安装计划 / 额外增加 / 自动排除”分开显示，用户可以直接增删个别项
+- 对配置文件来说，`*_SPECS` 表示额外增加，`*_EXCLUDES` 表示从模式默认方案里排除
 - `project / status` 只保留必要输入，不会追问无关密钥
 - OpenClaw 的 `scenario` 不再直接让用户理解 `ACCESS_MODE / PUBLIC_MODE`，而是先按“部署形态”选择，再自动落到配置项
+- 菜单通常可输入 `0` 或 `back` 返回；如果当前菜单已占用 `0`，可输入 `b` 或 `back`
+- 关键配置阶段里，如果已经进入后续问题，输入 `back` 会回到本阶段开头；在首个问题输入 `back` 会回到上一步
 
 ### 1. 从零开始安装，并直接进入最佳实践
 
